@@ -1,5 +1,5 @@
 .claude/settings.local.json
-debug
+target/debug
 target
 **/*.rs.bk
 *.pdb
