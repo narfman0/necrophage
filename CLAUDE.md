@@ -123,6 +123,24 @@ curl -X POST http://localhost:15702 \
 - Keep `main.rs` minimal — only app setup and plugin registration
 - Add `#[derive(Reflect)]` to types that should appear in the ECS inspector
 
+## Do
+
+- **Write unit tests for all pure logic.**
+- **Check compilation before considering a task done.** Always run `cargo check` (and `cargo check --features debug`) after changes. Zero errors, zero warnings is the bar.
+- **Keep gameplay logic in `necrophage-core`.**
+- **Reuse existing helpers.**
+- **Use `#[derive(Reflect)]` on new components and resources** so they show up in the ECS inspector automatically.
+- **Seed all RNG from `LevelSeed`.** Never use `rand::thread_rng()` in gameplay systems — store a `Resource<StdRng>` seeded from `LevelSeed` so results are reproducible.
+- **Use events for cross-system communication.** Prefer `EventWriter`/`EventReader` over direct resource mutation when decoupling systems (e.g. `DamageEvent`, `EntityDied`, `LevelTransitionEvent`).
+- **Mark level-scoped entities with `LevelEntity`.** Any entity that should be cleaned up on level transition must have this component.
+
+## Don't
+
+- **Don't use `cd` in bash commands.**
+- **Don't use `rand::thread_rng()` in systems.**
+- **Don't put rendering code in `necrophage-core`.**
+- **Don't leave dead code or unused imports.**
+
 ## Camera
 
 Orthographic 3D, isometric angle. Camera sits at equal X/Y/Z (e.g. `(10, 10, 10)`) looking at origin. Do not change to perspective projection.
