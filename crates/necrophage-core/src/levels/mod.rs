@@ -311,7 +311,7 @@ fn enter_building_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut events: EventReader<EnterBuildingEvent>,
-    level_entities: Query<(Entity, Option<&GridPos>), With<LevelEntity>>,
+    level_entities: Query<Entity, With<LevelEntity>>,
     mut player_query: Query<(&mut GridPos, &mut Transform), With<Player>>,
     active: Res<ActiveEntity>,
     mut level_stack: ResMut<LevelStack>,
@@ -328,7 +328,7 @@ fn enter_building_system(
         level_stack.0.push((current_level.0.clone(), player_gp));
 
         // Suspend (hide) all current level entities.
-        for (entity, _) in &level_entities {
+        for entity in &level_entities {
             commands.entity(entity).insert(Suspended).insert(Visibility::Hidden);
         }
 
