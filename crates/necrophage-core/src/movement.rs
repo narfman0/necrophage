@@ -6,13 +6,13 @@ use crate::possession::Controlled;
 use crate::world::{map::TileMap, CurrentMap};
 use crate::world::tile::tile_to_world;
 
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Reflect)]
 pub struct GridPos {
     pub x: i32,
     pub y: i32,
 }
 
-#[derive(Component, Default)]
+#[derive(Component, Default, Reflect)]
 pub struct MoveIntent(pub Option<(i32, i32)>);
 
 #[derive(Resource, Default)]
@@ -22,16 +22,19 @@ pub struct MovementPlugin;
 
 impl Plugin for MovementPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MoveCooldown>().add_systems(
-            Update,
-            (
-                tick_move_cooldown,
-                wasd_input.after(tick_move_cooldown),
-                resolve_movement.after(wasd_input),
-                sync_transforms.after(resolve_movement),
-                tab_cycle_entity,
-            ),
-        );
+        app.init_resource::<MoveCooldown>()
+            .register_type::<GridPos>()
+            .register_type::<MoveIntent>()
+            .add_systems(
+                Update,
+                (
+                    tick_move_cooldown,
+                    wasd_input.after(tick_move_cooldown),
+                    resolve_movement.after(wasd_input),
+                    sync_transforms.after(resolve_movement),
+                    tab_cycle_entity,
+                ),
+            );
     }
 }
 

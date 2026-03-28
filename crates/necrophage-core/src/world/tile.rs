@@ -70,3 +70,26 @@ pub fn spawn_tile(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tile_type_variants() {
+        assert_ne!(TileType::Floor, TileType::Wall);
+        assert_ne!(TileType::Floor, TileType::Door);
+        assert_ne!(TileType::Floor, TileType::Exit);
+        assert_ne!(TileType::Wall, TileType::Door);
+        assert_ne!(TileType::Wall, TileType::Exit);
+        assert_ne!(TileType::Door, TileType::Exit);
+    }
+
+    #[test]
+    fn floor_is_walkable() {
+        assert!(TileType::Floor.is_walkable());
+        assert!(TileType::Door.is_walkable());
+        assert!(TileType::Exit.is_walkable());
+        assert!(!TileType::Wall.is_walkable());
+    }
+}

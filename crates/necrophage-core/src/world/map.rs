@@ -44,3 +44,32 @@ impl TileMap {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn walkable_floor_tile() {
+        let mut map = TileMap::new(10, 10, TileType::Wall);
+        map.set(5, 5, TileType::Floor);
+        assert!(map.is_walkable(5, 5));
+    }
+
+    #[test]
+    fn wall_tile_not_walkable() {
+        let map = TileMap::new(10, 10, TileType::Wall);
+        assert!(!map.is_walkable(5, 5));
+    }
+
+    #[test]
+    fn out_of_bounds_not_walkable() {
+        let map = TileMap::new(10, 10, TileType::Floor);
+        // Mark interior as floor but out-of-bounds should still be false
+        assert!(!map.is_walkable(-1, 0));
+        assert!(!map.is_walkable(0, -1));
+        assert!(!map.is_walkable(10, 0));
+        assert!(!map.is_walkable(0, 10));
+        assert!(!map.is_walkable(-100, -100));
+    }
+}

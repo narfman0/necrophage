@@ -1,13 +1,10 @@
-[package]
-name = "necrophage"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    "crates/necrophage-core",
+    "crates/necrophage-gui",
+]
+resolver = "2"
 
-[dependencies]
-bevy = "0.15"
-rand = "0.8"
-
-# Enable optimizations for dependencies in debug builds
 [profile.dev.package."*"]
 opt-level = 3
 

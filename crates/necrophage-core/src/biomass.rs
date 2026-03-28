@@ -4,16 +4,16 @@ use crate::combat::Health;
 use crate::movement::GridPos;
 use crate::player::ActiveEntity;
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Reflect)]
 pub struct Biomass(pub f32);
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Reflect)]
 pub struct ControlSlots {
     pub max: usize,
     pub used: usize,
 }
 
-#[derive(Resource, PartialEq, Eq, Clone, Copy, Debug)]
+#[derive(Resource, PartialEq, Eq, Clone, Copy, Debug, Reflect)]
 pub enum BiomassTier {
     Tiny,
     Small,
@@ -98,6 +98,9 @@ impl Plugin for BiomassPlugin {
         app.init_resource::<Biomass>()
             .init_resource::<ControlSlots>()
             .init_resource::<BiomassTier>()
+            .register_type::<Biomass>()
+            .register_type::<BiomassTier>()
+            .register_type::<ControlSlots>()
             .add_event::<TierChanged>()
             .add_systems(
                 Update,
@@ -176,3 +179,87 @@ fn update_biomass_ui(
 
 #[derive(Component)]
 pub struct BiomassDisplay;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tier_thresholds() {
+        assert_eq!(BiomassTier::from_biomass(0.0), BiomassTier::Tiny);
+        assert_eq!(BiomassTier::from_biomass(10.0), BiomassTier::Tiny);
+        assert_eq!(BiomassTier::from_biomass(11.0), BiomassTier::Small);
+        assert_eq!(BiomassTier::from_biomass(30.0), BiomassTier::Small);
+        assert_eq!(BiomassTier::from_biomass(31.0), BiomassTier::Medium);
+        assert_eq!(BiomassTier::from_biomass(75.0), BiomassTier::Medium);
+        assert_eq!(BiomassTier::from_biomass(76.0), BiomassTier::Large);
+        assert_eq!(BiomassTier::from_biomass(150.0), BiomassTier::Large);
+        assert_eq!(BiomassTier::from_biomass(151.0), BiomassTier::Apex);
+    }
+
+    #[test]
+    fn tier_control_slots() {
+        assert_eq!(BiomassTier::Tiny.control_slots(), 1);
+        assert_eq!(BiomassTier::Small.control_slots(), 2);
+        assert_eq!(BiomassTier::Medium.control_slots(), 3);
+        assert_eq!(BiomassTier::Large.control_slots(), 4);
+        assert_eq!(BiomassTier::Apex.control_slots(), 4);
+    }
+
+    #[test]
+    fn tier_scale_ordering() {
+        let tiers = [
+            BiomassTier::Tiny,
+            BiomassTier::Small,
+            BiomassTier::Medium,
+            BiomassTier::Large,
+            BiomassTier::Apex,
+        ];
+        for i in 0..tiers.len() - 1 {
+            assert!(
+                tiers[i].scale().x < tiers[i + 1].scale().x,
+                "{:?} scale should be less than {:?}",
+                tiers[i],
+                tiers[i + 1]
+            );
+        }
+    }
+
+    #[test]
+    fn tier_damage_multiplier_ordering() {
+        let tiers = [
+            BiomassTier::Tiny,
+            BiomassTier::Small,
+            BiomassTier::Medium,
+            BiomassTier::Large,
+            BiomassTier::Apex,
+        ];
+        for i in 0..tiers.len() - 1 {
+            assert!(
+                tiers[i].damage_multiplier() < tiers[i + 1].damage_multiplier(),
+                "{:?} damage should be less than {:?}",
+                tiers[i],
+                tiers[i + 1]
+            );
+        }
+    }
+
+    #[test]
+    fn tier_hp_bonus_ordering() {
+        let tiers = [
+            BiomassTier::Tiny,
+            BiomassTier::Small,
+            BiomassTier::Medium,
+            BiomassTier::Large,
+            BiomassTier::Apex,
+        ];
+        for i in 0..tiers.len() - 1 {
+            assert!(
+                tiers[i].hp_bonus() < tiers[i + 1].hp_bonus(),
+                "{:?} hp_bonus should be less than {:?}",
+                tiers[i],
+                tiers[i + 1]
+            );
+        }
+    }
+}

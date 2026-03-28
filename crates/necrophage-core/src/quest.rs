@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::combat::{Elite, EntityDied, MobBoss};
 use crate::dialogue::DialogueQueue;
 use crate::movement::GridPos;
-use crate::npc::{Liberator, LiberatorState};
+use crate::npc::Liberator;
 use crate::player::ActiveEntity;
 use crate::world::CurrentMap;
 
@@ -15,6 +15,28 @@ pub enum QuestState {
     Confrontation,
     Betrayal,
     Complete,
+}
+
+impl QuestState {
+    pub fn current_step(&self) -> usize {
+        match self {
+            QuestState::Escape => 0,
+            QuestState::HitJob => 1,
+            QuestState::Confrontation => 2,
+            QuestState::Betrayal => 3,
+            QuestState::Complete => 4,
+        }
+    }
+
+    pub fn advance(&mut self) {
+        *self = match self {
+            QuestState::Escape => QuestState::HitJob,
+            QuestState::HitJob => QuestState::Confrontation,
+            QuestState::Confrontation => QuestState::Betrayal,
+            QuestState::Betrayal => QuestState::Complete,
+            QuestState::Complete => QuestState::Complete,
+        };
+    }
 }
 
 #[derive(Resource, Default)]
@@ -109,5 +131,38 @@ fn handle_death_for_quest(
             boss_defeated.0 = true;
             dialogue.push("System", "The boss is dead. The district trembles.");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initial_quest_state() {
+        let state = QuestState::default();
+        assert_eq!(state.current_step(), 0);
+        assert_eq!(state, QuestState::Escape);
+    }
+
+    #[test]
+    fn quest_advance() {
+        let mut state = QuestState::Escape;
+        assert_eq!(state.current_step(), 0);
+        state.advance();
+        assert_eq!(state, QuestState::HitJob);
+        assert_eq!(state.current_step(), 1);
+        state.advance();
+        assert_eq!(state, QuestState::Confrontation);
+        assert_eq!(state.current_step(), 2);
+        state.advance();
+        assert_eq!(state, QuestState::Betrayal);
+        assert_eq!(state.current_step(), 3);
+        state.advance();
+        assert_eq!(state, QuestState::Complete);
+        assert_eq!(state.current_step(), 4);
+        // Advancing beyond Complete stays at Complete
+        state.advance();
+        assert_eq!(state, QuestState::Complete);
     }
 }

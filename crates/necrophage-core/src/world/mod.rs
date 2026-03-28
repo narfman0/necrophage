@@ -16,4 +16,3 @@ impl Plugin for WorldPlugin {
         app.insert_resource(CurrentMap(TileMap::new(1, 1, TileType::Wall)));
     }
 }
-

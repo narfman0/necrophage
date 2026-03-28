@@ -9,7 +9,7 @@ use crate::world::CurrentMap;
 
 // ── Components ───────────────────────────────────────────────────────────────
 
-#[derive(Component, Clone)]
+#[derive(Component, Clone, Reflect)]
 pub struct Health {
     pub current: f32,
     pub max: f32,
@@ -21,7 +21,7 @@ impl Health {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Reflect)]
 pub struct Attack {
     pub damage: f32,
     pub cooldown: f32,
@@ -54,7 +54,7 @@ pub struct HpBarRoot;
 
 // ── AI state ─────────────────────────────────────────────────────────────────
 
-#[derive(Component, Default, PartialEq, Eq, Clone, Copy)]
+#[derive(Component, Default, PartialEq, Eq, Clone, Copy, Reflect)]
 pub enum EnemyAI {
     #[default]
     Patrol,
@@ -99,6 +99,9 @@ impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<DamageEvent>()
             .add_event::<EntityDied>()
+            .register_type::<Health>()
+            .register_type::<Attack>()
+            .register_type::<EnemyAI>()
             .add_systems(
                 Update,
                 (

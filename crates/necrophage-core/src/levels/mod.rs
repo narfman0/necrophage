@@ -204,8 +204,6 @@ fn spawn_tile_entity(
     y: i32,
     tile: crate::world::tile::TileType,
 ) -> Entity {
-    // We need to spawn and get the entity id; we'll use a workaround since spawn_tile doesn't return Entity.
-    // Inline the spawn here.
     use crate::world::tile::TileType;
     use crate::world::tile::tile_to_world;
     let pos = tile_to_world(x, y);
