@@ -4,6 +4,7 @@ use crate::combat::{Attack, Health};
 use crate::dialogue::DialogueQueue;
 use crate::movement::GridPos;
 use crate::player::ActiveEntity;
+use crate::quest::QuestState;
 use crate::world::CurrentMap;
 
 #[derive(Component)]
@@ -67,9 +68,15 @@ fn liberator_ai(
     map: Res<CurrentMap>,
     time: Res<Time>,
     mut dialogue: ResMut<DialogueQueue>,
+    quest: Res<QuestState>,
 ) {
     let Ok(player_gp) = player_pos.get(active.0) else { return };
     let Ok((_, mut state, mut pos, mut timer)) = query.get_single_mut() else { return };
+
+    // React to quest reaching Confrontation — wire liberator into the scene.
+    if *quest == QuestState::Confrontation && *state == LiberatorState::AwaitingPlayer {
+        *state = LiberatorState::Confrontation;
+    }
 
     timer.0 -= time.delta_secs();
 
