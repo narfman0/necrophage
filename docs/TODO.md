@@ -24,6 +24,59 @@ Derived from `PRODUCT_PLAN.md` and code inspection. Items are grouped by system 
 
 ---
 
+## Level System — Multi-Building Enter/Exit
+
+Refactor the two-level one-way transition into a stack-based system that supports entering and exiting many buildings with deterministic, persistent layouts.
+
+### Level Identity (`levels/mod.rs`)
+- [ ] Replace `LevelState` enum with a `LevelId` type:
+  ```rust
+  #[derive(Clone, PartialEq, Eq, Hash)]
+  pub enum LevelId { Jail, District, Building(u64) }
+  ```
+- [ ] Building IDs are derived from district grid position: `building_id = hash(bx, by)` using the level seed as a salt — same position always yields the same ID and therefore the same layout
+
+### Navigation Stack (`levels/mod.rs`)
+- [ ] Add `LevelStack(Vec<(LevelId, GridPos)>)` resource — each entry is the level to return to and the tile position to place the player on exit
+- [ ] Add `EnterBuildingEvent { building_id: u64 }` and `ExitLevelEvent` to replace the current `LevelTransitionEvent`
+- [ ] `enter_building_system`: on `EnterBuildingEvent`, push `(current_level_id, player_pos)` onto the stack, suspend the current level, load the building interior
+- [ ] `exit_level_system`: on `ExitLevelEvent` (player steps on an `Exit` tile inside a building), pop the stack, restore the parent level, teleport player to the saved return `GridPos`
+- [ ] Jail → District transition becomes a special case of `ExitLevelEvent` with no return (stack is empty after pop → that path is one-way as before)
+
+### Level Cache (`levels/mod.rs`)
+- [ ] Add `LevelCache(HashMap<LevelId, CachedLevel>)` resource:
+  ```rust
+  struct CachedLevel {
+      map: TileMap,
+      dead_enemy_indices: HashSet<usize>,
+  }
+  ```
+- [ ] On first visit to any `LevelId`: generate from seed, insert into cache
+- [ ] On revisit: restore `TileMap` from cache, skip spawning enemies whose index is in `dead_enemy_indices`
+- [ ] On enemy death (`EntityDied`): record the enemy's spawn index into the appropriate `CachedLevel`
+- [ ] **Suspend/restore instead of despawn**: when leaving a level to enter a building, tag all current `LevelEntity` entities with `Suspended` and set `Visibility::Hidden` rather than despawning them — restore visibility on return; only despawn on true level transition (jail → district)
+
+### Entrance Tiles (`levels/district.rs`, `levels/generator.rs`)
+- [ ] Add `entrance_positions: Vec<(i32, i32, u64)>` (x, y, building_id) to `SpawnInfo`
+- [ ] `DistrictGenerator` emits one entrance per carved building, placed at the building's door tile; assign each the stable `building_id` hash
+- [ ] Add `Entrance { building_id: u64 }` component; spawn it on the door entity for each entrance position
+- [ ] Add `check_entrances` system in `levels/mod.rs`: when the active entity's `GridPos` matches an `Entrance` tile, fire `EnterBuildingEvent`
+
+### Building Generator (`levels/building.rs`)
+- [ ] New `BuildingGenerator` that accepts a `BuildingKind` enum and a seed, produces a small interior (`TileMap` ~12×10):
+  - `BuildingKind::Generic` — one room, 1–3 enemies, biomass orbs
+  - `BuildingKind::GangHideout` — two rooms, 3–5 enemies, one elite
+  - `BuildingKind::BossHq` — replaces the current hardcoded boss room in the district map
+- [ ] Add `building_kind: BuildingKind` alongside `building_id` in `SpawnInfo::entrance_positions`
+- [ ] Building interior always has one `Exit` tile at the doorway back to the street
+
+### Tests
+- [ ] Unit test: same `building_id` + same seed always produces identical `TileMap`
+- [ ] Unit test: `LevelStack` push/pop round-trips correctly
+- [ ] Unit test: `dead_enemy_indices` prevents re-spawning killed enemies on revisit
+
+---
+
 ## Movement
 
 ### Smooth interpolation (`movement.rs`)
