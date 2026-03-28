@@ -1,0 +1,121 @@
+use rand::Rng;
+
+use crate::world::{
+    map::TileMap,
+    tile::TileType,
+};
+use super::generator::{LevelGenerator, SpawnInfo};
+
+pub struct DistrictGenerator;
+
+impl LevelGenerator for DistrictGenerator {
+    fn generate(&self, rng: &mut impl Rng) -> (TileMap, SpawnInfo) {
+        let w = 60i32;
+        let h = 40i32;
+        let mut map = TileMap::new(w, h, TileType::Wall);
+
+        // Main streets: horizontal and vertical avenues
+        for x in 0..w {
+            map.set(x, h / 2, TileType::Floor);
+            map.set(x, 5, TileType::Floor);
+            map.set(x, h - 5, TileType::Floor);
+        }
+        for y in 0..h {
+            map.set(5, y, TileType::Floor);
+            map.set(w / 2, y, TileType::Floor);
+            map.set(w - 5, y, TileType::Floor);
+        }
+
+        // Carve random buildings (rooms with walls)
+        let building_count = rng.gen_range(6..12);
+        let mut buildings: Vec<(i32, i32, i32, i32)> = Vec::new();
+        for _ in 0..building_count {
+            let bx = rng.gen_range(7..w - 12);
+            let by = rng.gen_range(7..h - 12);
+            let bw = rng.gen_range(4..9);
+            let bh = rng.gen_range(4..8);
+            let x2 = (bx + bw).min(w - 2);
+            let y2 = (by + bh).min(h - 2);
+            // Only place if doesn't overlap a street
+            if !overlaps_street(bx, by, x2, y2, w, h) {
+                carve_interior(&mut map, bx, by, x2, y2);
+                buildings.push((bx, by, x2, y2));
+            }
+        }
+
+        // Entry point (bottom of left street)
+        let entry_x = 5i32;
+        let entry_y = h - 1;
+        map.set(entry_x, entry_y, TileType::Floor);
+
+        // Mob boss building: fixed position, large room
+        let boss_bx = w - 15;
+        let boss_by = 8;
+        let boss_bx2 = w - 7;
+        let boss_by2 = 15;
+        carve_interior(&mut map, boss_bx, boss_by, boss_bx2, boss_by2);
+        // Door into boss building from main street
+        map.set(boss_bx + (boss_bx2 - boss_bx) / 2, boss_by2, TileType::Door);
+
+        // Exit (sewer entrance in bottom-right corner)
+        let exit_x = w - 2;
+        let exit_y = h - 2;
+        map.set(exit_x, exit_y, TileType::Exit);
+        map.exit_pos = Some((exit_x, exit_y));
+        // Connect sewer to street
+        for x in w - 6..=exit_x {
+            map.set(x, h - 5, TileType::Floor);
+        }
+
+        let mut info = SpawnInfo::new((entry_x, h - 3));
+        info.boss_position = Some((boss_bx + (boss_bx2 - boss_bx) / 2, boss_by + 2));
+
+        // Civilian and enemy spawns on streets
+        let enemy_count = rng.gen_range(5usize..12);
+        for _ in 0..enemy_count {
+            let x = rng.gen_range(1..w - 1);
+            let y = rng.gen_range(1..h - 1);
+            if map.is_walkable(x, y) {
+                info.enemy_positions.push((x, y));
+            }
+        }
+
+        let civilian_count = rng.gen_range(5usize..12);
+        for _ in 0..civilian_count {
+            let x = rng.gen_range(1..w - 1);
+            let y = rng.gen_range(1..h - 1);
+            if map.is_walkable(x, y) {
+                info.civilian_positions.push((x, y));
+            }
+        }
+
+        // Lieutenant
+        info.elite_positions.push((w / 2 + 2, h / 2 + 2));
+
+        (map, info)
+    }
+}
+
+fn carve_interior(map: &mut TileMap, x1: i32, y1: i32, x2: i32, y2: i32) {
+    for y in y1 + 1..y2 {
+        for x in x1 + 1..x2 {
+            map.set(x, y, TileType::Floor);
+        }
+    }
+}
+
+fn overlaps_street(x1: i32, y1: i32, x2: i32, y2: i32, w: i32, h: i32) -> bool {
+    let street_xs = [5, w / 2, w - 5];
+    let street_ys = [5, h / 2, h - 5];
+    for &sx in &street_xs {
+        if sx >= x1 && sx <= x2 {
+            return true;
+        }
+    }
+    for &sy in &street_ys {
+        if sy >= y1 && sy <= y2 {
+            return true;
+        }
+    }
+    false
+}

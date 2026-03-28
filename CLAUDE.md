@@ -1,4 +1,4 @@
-# Psychophage — Claude Guide
+# Necrophage — Claude Guide
 
 ## Project
 
