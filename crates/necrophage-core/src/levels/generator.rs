@@ -14,6 +14,8 @@ pub struct SpawnInfo {
     pub elite_positions: Vec<(i32, i32)>,
     pub boss_position: Option<(i32, i32)>,
     pub civilian_positions: Vec<(i32, i32)>,
+    /// Positions for point light streetlamps in the district level.
+    pub streetlight_positions: Vec<(i32, i32)>,
 }
 
 impl SpawnInfo {
@@ -26,6 +28,7 @@ impl SpawnInfo {
             elite_positions: Vec::new(),
             boss_position: None,
             civilian_positions: Vec::new(),
+            streetlight_positions: Vec::new(),
         }
     }
 }

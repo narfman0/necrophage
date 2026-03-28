@@ -82,6 +82,23 @@ fn generate_jail(
 
     commands.insert_resource(CurrentMap(map));
 
+    // Dim fluorescent-style point lights in jail cells.
+    let cell_positions = [(3i32, 3i32), (3, 7), (15, 3), (15, 12)];
+    for (lx, ly) in cell_positions {
+        let e = commands.spawn((
+            PointLight {
+                color: Color::srgb(0.7, 0.75, 1.0),
+                intensity: 6_000.0,
+                radius: 0.5,
+                range: 5.0,
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::from_xyz(lx as f32, 2.0, ly as f32),
+        )).id();
+        commands.entity(e).insert(LevelEntity);
+    }
+
     dialogue.push("System", format!("Jail seed: {}", seed.0).as_str());
 }
 
@@ -191,6 +208,22 @@ fn handle_transition(
             commands.entity(e).insert(MobBoss).insert(BossAI::default()).insert(LevelEntity);
         }
 
+        // Spawn district streetlights.
+        for &(lx, ly) in &info.streetlight_positions {
+            let e = commands.spawn((
+                PointLight {
+                    color: Color::srgb(1.0, 0.9, 0.6),
+                    intensity: 15_000.0,
+                    radius: 0.3,
+                    range: 7.0,
+                    shadows_enabled: false,
+                    ..default()
+                },
+                Transform::from_xyz(lx as f32, 3.0, ly as f32),
+            )).id();
+            commands.entity(e).insert(LevelEntity);
+        }
+
         commands.insert_resource(CurrentMap(map));
         dialogue.push("System", "Welcome to the district. Find the lieutenant.");
     }
@@ -213,6 +246,8 @@ fn spawn_tile_entity(
                 Mesh3d(meshes.add(Cuboid::new(1.0, 0.1, 1.0))),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: Color::srgb(0.45, 0.45, 0.45),
+                    perceptual_roughness: 0.9,
+                    metallic: 0.0,
                     ..default()
                 })),
                 Transform::from_translation(pos + Vec3::new(0.0, -0.05, 0.0)),
@@ -223,6 +258,8 @@ fn spawn_tile_entity(
                 Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: Color::srgb(0.2, 0.2, 0.2),
+                    perceptual_roughness: 0.7,
+                    metallic: 0.1,
                     ..default()
                 })),
                 Transform::from_translation(pos + Vec3::new(0.0, 0.5, 0.0)),
@@ -233,6 +270,8 @@ fn spawn_tile_entity(
                 Mesh3d(meshes.add(Cuboid::new(1.0, 0.5, 1.0))),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: Color::srgb(0.55, 0.35, 0.1),
+                    perceptual_roughness: 0.8,
+                    metallic: 0.0,
                     ..default()
                 })),
                 Transform::from_translation(pos + Vec3::new(0.0, 0.25, 0.0)),
@@ -243,6 +282,8 @@ fn spawn_tile_entity(
                 Mesh3d(meshes.add(Cuboid::new(1.0, 0.1, 1.0))),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: Color::srgb(0.1, 0.8, 0.3),
+                    perceptual_roughness: 0.9,
+                    metallic: 0.0,
                     ..default()
                 })),
                 Transform::from_translation(pos + Vec3::new(0.0, -0.05, 0.0)),

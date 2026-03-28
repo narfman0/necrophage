@@ -92,6 +92,21 @@ impl LevelGenerator for DistrictGenerator {
         // Lieutenant
         info.elite_positions.push((w / 2 + 2, h / 2 + 2));
 
+        // Streetlights at intersection corners and along avenues.
+        let street_xs = [5i32, w / 2, w - 5];
+        let street_ys = [5i32, h / 2, h - 5];
+        for &sx in &street_xs {
+            for &sy in &street_ys {
+                info.streetlight_positions.push((sx, sy));
+            }
+        }
+        // Additional mid-block lights along the horizontal avenues.
+        for &sy in &street_ys {
+            for step in (10..w).step_by(10) {
+                info.streetlight_positions.push((step, sy));
+            }
+        }
+
         (map, info)
     }
 }
