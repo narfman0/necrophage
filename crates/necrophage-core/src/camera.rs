@@ -36,12 +36,16 @@ fn follow_target(
     target: Res<CameraTarget>,
     entity_transforms: Query<&Transform, Without<Camera3d>>,
     mut camera_query: Query<&mut Transform, With<Camera3d>>,
+    time: Res<Time>,
 ) {
     let Some(target_entity) = target.0 else { return };
     let Ok(target_transform) = entity_transforms.get(target_entity) else { return };
     let Ok(mut cam) = camera_query.get_single_mut() else { return };
 
     let look_at = target_transform.translation;
-    cam.translation = look_at + ISO_OFFSET;
-    *cam = Transform::from_translation(cam.translation).looking_at(look_at, Vec3::Y);
+    let desired = look_at + ISO_OFFSET;
+    // Lerp toward desired position — lag of ~8 units/sec feels grounded.
+    let alpha = (8.0 * time.delta_secs()).min(1.0);
+    let new_pos = cam.translation.lerp(desired, alpha);
+    *cam = Transform::from_translation(new_pos).looking_at(look_at, Vec3::Y);
 }
