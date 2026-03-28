@@ -20,12 +20,18 @@ pub struct CameraShake {
     pub trauma: f32,
 }
 
+/// The unshaken camera look-at position, updated by follow_target.
+/// apply_camera_shake reads this to avoid feeding shake back into the follow lerp.
+#[derive(Resource, Default)]
+pub struct CameraBaseLookAt(pub Vec3);
+
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraTarget>()
             .init_resource::<CameraShake>()
+            .init_resource::<CameraBaseLookAt>()
             .add_systems(Startup, spawn_camera)
             .add_systems(
                 Update,
@@ -87,17 +93,15 @@ fn follow_target(
     target: Res<CameraTarget>,
     entity_transforms: Query<&Transform, Without<Camera3d>>,
     mut camera_query: Query<&mut Transform, With<Camera3d>>,
-    time: Res<Time>,
+    mut base: ResMut<CameraBaseLookAt>,
 ) {
     let Some(target_entity) = target.0 else { return };
     let Ok(target_transform) = entity_transforms.get(target_entity) else { return };
     let Ok(mut cam) = camera_query.get_single_mut() else { return };
 
     let look_at = target_transform.translation;
-    let desired = look_at + ISO_OFFSET;
-    let alpha = (8.0 * time.delta_secs()).min(1.0);
-    let new_pos = cam.translation.lerp(desired, alpha);
-    *cam = Transform::from_translation(new_pos).looking_at(look_at, Vec3::Y);
+    base.0 = look_at;
+    *cam = Transform::from_translation(look_at + ISO_OFFSET).looking_at(look_at, Vec3::Y);
 }
 
 fn update_player_light(
@@ -137,6 +141,7 @@ fn trauma_from_damage(
 
 fn apply_camera_shake(
     mut shake: ResMut<CameraShake>,
+    base: Res<CameraBaseLookAt>,
     mut camera_query: Query<&mut Transform, With<Camera3d>>,
     time: Res<Time>,
 ) {
@@ -153,5 +158,7 @@ fn apply_camera_shake(
         0.0,
         (t * 47.0).cos() * amount * 0.3,
     );
-    cam.translation += offset;
+    // Apply shake relative to the unshaken base position so it doesn't drift.
+    let look_at = base.0;
+    cam.translation = look_at + ISO_OFFSET + offset;
 }

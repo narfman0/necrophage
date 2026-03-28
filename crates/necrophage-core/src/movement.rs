@@ -12,126 +12,112 @@ pub struct GridPos {
     pub y: i32,
 }
 
+/// Continuous movement direction set each frame from WASD input.
+/// X maps to world X (left/right), Y maps to world Z (forward/back).
 #[derive(Component, Default, Reflect)]
-pub struct MoveIntent(pub Option<(i32, i32)>);
+pub struct MoveDir(pub Vec2);
 
-/// Smooth world-space position that lerps toward the grid position each frame.
-#[derive(Component, Reflect)]
-pub struct WorldPos(pub Vec3);
-
-impl Default for WorldPos {
-    fn default() -> Self {
-        Self(Vec3::ZERO)
-    }
-}
-
-#[derive(Resource, Default)]
-pub struct MoveCooldown(pub f32);
-
-/// Movement lerp speed in world-units per second.
+/// Movement speed in world units per second.
+const MOVE_SPEED: f32 = 5.5;
+/// Entity collision radius in world units.
+const ENTITY_RADIUS: f32 = 0.35;
+/// Lerp speed for non-player entities (enemies / NPCs).
 const LERP_SPEED: f32 = 16.0;
 
 pub struct MovementPlugin;
 
 impl Plugin for MovementPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MoveCooldown>()
-            .register_type::<GridPos>()
-            .register_type::<MoveIntent>()
-            .register_type::<WorldPos>()
+        app.register_type::<GridPos>()
+            .register_type::<MoveDir>()
             .add_systems(
                 Update,
                 (
-                    tick_move_cooldown,
-                    wasd_input.after(tick_move_cooldown),
-                    resolve_movement.after(wasd_input),
+                    wasd_input,
+                    apply_movement.after(wasd_input),
                     tab_cycle_entity,
                 )
                 .run_if(in_state(GameState::Playing)),
             )
-            // lerp_transforms always runs so entities don't snap during the ending.
+            // lerp_transforms handles enemies/NPCs; always runs so they don't snap during ending.
             .add_systems(Update, lerp_transforms);
-    }
-}
-
-fn tick_move_cooldown(mut cooldown: ResMut<MoveCooldown>, time: Res<Time>) {
-    if cooldown.0 > 0.0 {
-        cooldown.0 -= time.delta_secs();
     }
 }
 
 fn wasd_input(
     keys: Res<ButtonInput<KeyCode>>,
     active: Res<ActiveEntity>,
-    mut move_intents: Query<&mut MoveIntent>,
-    cooldown: Res<MoveCooldown>,
+    mut move_dirs: Query<&mut MoveDir>,
 ) {
-    if cooldown.0 > 0.0 {
-        return;
-    }
-    let Ok(mut intent) = move_intents.get_mut(active.0) else { return };
+    let Ok(mut dir) = move_dirs.get_mut(active.0) else { return };
 
     let w = keys.pressed(KeyCode::KeyW);
     let s = keys.pressed(KeyCode::KeyS);
     let a = keys.pressed(KeyCode::KeyA);
     let d = keys.pressed(KeyCode::KeyD);
 
-    // Build both axes independently, then combine for 8-directional movement.
-    let dx = if d { 1 } else if a { -1 } else { 0 };
-    let dy = if w { -1 } else if s { 1 } else { 0 };
-
-    intent.0 = if dx != 0 || dy != 0 { Some((dx, dy)) } else { None };
+    let dx = if d { 1.0 } else if a { -1.0 } else { 0.0 };
+    let dy = if w { -1.0 } else if s { 1.0 } else { 0.0 };
+    dir.0 = Vec2::new(dx, dy);
 }
 
-fn resolve_movement(
-    active: Res<ActiveEntity>,
+fn apply_movement(
     current_map: Res<CurrentMap>,
-    mut query: Query<(&mut GridPos, &mut MoveIntent)>,
-    all_positions: Query<&GridPos, Without<MoveIntent>>,
-    mut cooldown: ResMut<MoveCooldown>,
+    mut query: Query<(&mut Transform, &mut GridPos, &MoveDir)>,
+    time: Res<Time>,
 ) {
     let map: &TileMap = &current_map.0;
-    let Ok((mut pos, mut intent)) = query.get_mut(active.0) else { return };
-    let Some((dx, dy)) = intent.0.take() else { return };
+    let dt = time.delta_secs();
 
-    let nx = pos.x + dx;
-    let ny = pos.y + dy;
-
-    if map.is_walkable(nx, ny) {
-        let occupied = all_positions.iter().any(|p| p.x == nx && p.y == ny);
-        if !occupied {
-            pos.x = nx;
-            pos.y = ny;
-            cooldown.0 = 0.15;
-            return;
+    for (mut transform, mut grid_pos, move_dir) in &mut query {
+        let raw = move_dir.0;
+        if raw == Vec2::ZERO {
+            continue;
         }
-    }
+        let dir = raw.normalize();
+        let vel = dir * MOVE_SPEED;
+        let r = ENTITY_RADIUS;
 
-    // Diagonal blocked — try cardinal fallbacks independently.
-    if dx != 0 && dy != 0 {
-        let cx = pos.x + dx;
-        let cy_same = pos.y;
-        let x_blocked = !map.is_walkable(cx, cy_same)
-            || all_positions.iter().any(|p| p.x == cx && p.y == cy_same);
+        let mut px = transform.translation.x;
+        let mut pz = transform.translation.z;
 
-        let cy = pos.y + dy;
-        let cx_same = pos.x;
-        let y_blocked = !map.is_walkable(cx_same, cy)
-            || all_positions.iter().any(|p| p.x == cx_same && p.y == cy);
-
-        if !x_blocked {
-            pos.x += dx;
-            cooldown.0 = 0.15;
-        } else if !y_blocked {
-            pos.y += dy;
-            cooldown.0 = 0.15;
+        // X axis — check two corners in the direction of movement.
+        let vx = vel.x * dt;
+        if vx != 0.0 {
+            let nx = px + vx;
+            let front_x = nx + r * vx.signum();
+            if map.is_walkable(front_x.round() as i32, (pz - r).round() as i32)
+                && map.is_walkable(front_x.round() as i32, (pz + r).round() as i32)
+            {
+                px = nx;
+            }
         }
+
+        // Z axis — check two corners in the direction of movement.
+        let vz = vel.y * dt;
+        if vz != 0.0 {
+            let nz = pz + vz;
+            let front_z = nz + r * vz.signum();
+            if map.is_walkable((px - r).round() as i32, front_z.round() as i32)
+                && map.is_walkable((px + r).round() as i32, front_z.round() as i32)
+            {
+                pz = nz;
+            }
+        }
+
+        transform.translation.x = px;
+        transform.translation.z = pz;
+
+        // Derive tile position from world position.
+        grid_pos.x = px.round() as i32;
+        grid_pos.y = pz.round() as i32;
     }
 }
 
-/// Lerp entity Transform.translation toward the grid-snapped world position each frame.
+/// Lerp transform toward grid position for entities that don't use continuous movement
+/// (enemies, NPCs, knockback targets).
 fn lerp_transforms(
-    mut query: Query<(&GridPos, &mut Transform)>,
+    mut query: Query<(&GridPos, &mut Transform), Without<MoveDir>>,
     time: Res<Time>,
 ) {
     let speed = LERP_SPEED * time.delta_secs();
@@ -218,19 +204,51 @@ mod tests {
     fn movement_8_directional_all_deltas() {
         // All 8 direction combos produce non-zero intent.
         let cases = [
-            (true, false, false, false, (0, -1)),   // W
-            (false, true, false, false, (0, 1)),    // S
-            (false, false, true, false, (-1, 0)),   // A
-            (false, false, false, true, (1, 0)),    // D
-            (true, false, false, true, (1, -1)),    // W+D
-            (true, false, true, false, (-1, -1)),   // W+A
-            (false, true, false, true, (1, 1)),     // S+D
-            (false, true, true, false, (-1, 1)),    // S+A
+            (true, false, false, false, (0.0, -1.0)),   // W
+            (false, true, false, false, (0.0, 1.0)),    // S
+            (false, false, true, false, (-1.0, 0.0)),   // A
+            (false, false, false, true, (1.0, 0.0)),    // D
+            (true, false, false, true, (1.0, -1.0)),    // W+D
+            (true, false, true, false, (-1.0, -1.0)),   // W+A
+            (false, true, false, true, (1.0, 1.0)),     // S+D
+            (false, true, true, false, (-1.0, 1.0)),    // S+A
         ];
         for (w, s, a, d, expected) in cases {
-            let dx = if d { 1 } else if a { -1 } else { 0 };
-            let dy = if w { -1 } else if s { 1 } else { 0 };
+            let dx = if d { 1.0f32 } else if a { -1.0 } else { 0.0 };
+            let dy = if w { -1.0f32 } else if s { 1.0 } else { 0.0 };
             assert_eq!((dx, dy), expected, "w={w} s={s} a={a} d={d}");
         }
+    }
+
+    #[test]
+    fn make_map_with_floor_has_right_wall() {
+        let m = make_map_with_floor();
+        assert!(!m.is_walkable(9, 5));
+        assert!(m.is_walkable(8, 5));
+    }
+
+    /// Mirrors the per-axis collision check in `apply_movement`.
+    #[test]
+    fn continuous_movement_blocked_near_wall() {
+        let m = make_map_with_floor(); // wall column at x=9
+        let r = ENTITY_RADIUS;
+        let pz = 5.0f32;
+        let vx = 0.1f32; // moving +x
+
+        // Far from wall: entity at x=8.0 → front edge 8.1+r=8.45 → tile 8 → walkable.
+        let px_far = 8.0f32;
+        let front_far = (px_far + vx) + r;
+        assert!(
+            m.is_walkable(front_far.round() as i32, (pz - r).round() as i32),
+            "should not be blocked far from wall"
+        );
+
+        // Close to wall: entity at x=8.6 → front edge 8.7+r=9.05 → tile 9 → wall.
+        let px_close = 8.6f32;
+        let front_close = (px_close + vx) + r;
+        assert!(
+            !m.is_walkable(front_close.round() as i32, (pz - r).round() as i32),
+            "should be blocked when front edge enters wall tile"
+        );
     }
 }

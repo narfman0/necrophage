@@ -32,6 +32,7 @@ fn dispatch_commands(
     active: Res<ActiveEntity>,
     mut healths: Query<&mut Health>,
     mut positions: Query<&mut GridPos>,
+    mut transforms: Query<&mut Transform>,
     enemies: Query<Entity, With<Enemy>>,
     mut quest: Option<ResMut<QuestState>>,
 ) {
@@ -44,6 +45,7 @@ fn dispatch_commands(
             &active,
             &mut healths,
             &mut positions,
+            &mut transforms,
             &enemies,
             &mut quest,
         );
@@ -59,6 +61,7 @@ fn execute_command(
     active: &ActiveEntity,
     healths: &mut Query<&mut Health>,
     positions: &mut Query<&mut GridPos>,
+    transforms: &mut Query<&mut Transform>,
     enemies: &Query<Entity, With<Enemy>>,
     quest: &mut Option<ResMut<QuestState>>,
 ) -> String {
@@ -110,6 +113,9 @@ fn execute_command(
                 if let Ok(mut pos) = positions.get_mut(active.0) {
                     pos.x = px;
                     pos.y = py;
+                    if let Ok(mut t) = transforms.get_mut(active.0) {
+                        t.translation = Vec3::new(px as f32, 0.5, py as f32);
+                    }
                     format!("Teleported to ({}, {})", px, py)
                 } else {
                     "Active entity has no GridPos".into()

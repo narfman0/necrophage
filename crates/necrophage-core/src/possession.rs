@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::biomass::ControlSlots;
 use crate::camera::CameraTarget;
 use crate::combat::{Attack, Enemy, EnemyAI, HpBar, PatrolTimer};
-use crate::movement::MoveIntent;
+use crate::movement::MoveDir;
 use crate::movement::GridPos;
 use crate::player::ActiveEntity;
 use crate::world::GameState;
@@ -92,7 +92,7 @@ fn hold_e_infect(
                             .remove::<EnemyAI>()
                             .remove::<PatrolTimer>()
                             .insert(Controlled)
-                            .insert(MoveIntent::default())
+                            .insert(MoveDir::default())
                             .insert(Attack::new(8.0, 1.0))
                             .insert(MeshMaterial3d(green_mat));
 

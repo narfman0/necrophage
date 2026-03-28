@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::camera::CameraTarget;
 use crate::combat::Health;
-use crate::movement::{GridPos, MoveIntent};
+use crate::movement::{GridPos, MoveDir};
 use crate::possession::Controlled;
 
 #[derive(Component)]
@@ -30,7 +30,7 @@ fn spawn_player(
             Player,
             Controlled,
             start,
-            MoveIntent::default(),
+            MoveDir::default(),
             Health::new(50.0),
             Mesh3d(meshes.add(Capsule3d::new(0.3, 0.6))),
             MeshMaterial3d(materials.add(StandardMaterial {

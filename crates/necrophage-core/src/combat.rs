@@ -504,13 +504,14 @@ fn civilian_flee_system(
 }
 
 fn update_hp_bars(
-    enemies: Query<(Entity, &Health, &Transform), With<Enemy>>,
-    mut hp_bars: Query<(&HpBar, &mut Transform), Without<Enemy>>,
+    enemies: Query<(&Health, &Transform, &HpBar)>,
+    mut bar_transforms: Query<&mut Transform, (With<HpBarRoot>, Without<HpBar>)>,
 ) {
-    for (bar, mut bar_transform) in &mut hp_bars {
-        if let Ok((_, hp, enemy_transform)) = enemies.get(bar.0) {
+    for (hp, enemy_transform, HpBar(bar_entity)) in &enemies {
+        if let Ok(mut bar_transform) = bar_transforms.get_mut(*bar_entity) {
             let ratio = (hp.current / hp.max).clamp(0.0, 1.0);
-            bar_transform.translation = enemy_transform.translation + Vec3::new(0.0, 1.0, 0.0);
+            bar_transform.translation =
+                enemy_transform.translation + Vec3::new(0.0, 1.2, 0.0);
             bar_transform.scale = Vec3::new(ratio, 1.0, 1.0);
         }
     }
