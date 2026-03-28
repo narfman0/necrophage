@@ -4,9 +4,18 @@ use crate::world::{
     map::TileMap,
     tile::TileType,
 };
-use super::generator::{LevelGenerator, SpawnInfo};
+use super::generator::{building_hash, BuildingKind, LevelGenerator, SpawnInfo};
 
-pub struct DistrictGenerator;
+pub struct DistrictGenerator {
+    /// Level seed used to derive stable building IDs.
+    pub seed: u64,
+}
+
+impl Default for DistrictGenerator {
+    fn default() -> Self {
+        Self { seed: 12345 }
+    }
+}
 
 impl LevelGenerator for DistrictGenerator {
     fn generate(&self, rng: &mut impl Rng) -> (TileMap, SpawnInfo) {
@@ -26,20 +35,29 @@ impl LevelGenerator for DistrictGenerator {
             map.set(w - 5, y, TileType::Floor);
         }
 
-        // Carve random buildings (rooms with walls)
+        // Carve random buildings — collect entrance data before SpawnInfo.
         let building_count = rng.gen_range(6..12);
-        let mut buildings: Vec<(i32, i32, i32, i32)> = Vec::new();
-        for _ in 0..building_count {
+        let mut entrance_positions: Vec<(i32, i32, u64, BuildingKind)> = Vec::new();
+        for i in 0..building_count {
             let bx = rng.gen_range(7..w - 12);
             let by = rng.gen_range(7..h - 12);
             let bw = rng.gen_range(4..9);
             let bh = rng.gen_range(4..8);
             let x2 = (bx + bw).min(w - 2);
             let y2 = (by + bh).min(h - 2);
-            // Only place if doesn't overlap a street
             if !overlaps_street(bx, by, x2, y2, w, h) {
                 carve_interior(&mut map, bx, by, x2, y2);
-                buildings.push((bx, by, x2, y2));
+                // Door on the bottom wall of the building.
+                let door_x = bx + (x2 - bx) / 2;
+                let door_y = y2;
+                map.set(door_x, door_y, TileType::Door);
+                let bid = building_hash(bx, by, self.seed);
+                let kind = if i % 3 == 1 {
+                    BuildingKind::GangHideout
+                } else {
+                    BuildingKind::Generic
+                };
+                entrance_positions.push((door_x, door_y, bid, kind));
             }
         }
 
@@ -54,21 +72,25 @@ impl LevelGenerator for DistrictGenerator {
         let boss_bx2 = w - 7;
         let boss_by2 = 15;
         carve_interior(&mut map, boss_bx, boss_by, boss_bx2, boss_by2);
-        // Door into boss building from main street
-        map.set(boss_bx + (boss_bx2 - boss_bx) / 2, boss_by2, TileType::Door);
+        // Boss building door + entrance entry
+        let boss_door_x = boss_bx + (boss_bx2 - boss_bx) / 2;
+        let boss_door_y = boss_by2;
+        map.set(boss_door_x, boss_door_y, TileType::Door);
+        let boss_bid = building_hash(boss_bx, boss_by, self.seed);
+        entrance_positions.push((boss_door_x, boss_door_y, boss_bid, BuildingKind::BossHq));
 
         // Exit (sewer entrance in bottom-right corner)
         let exit_x = w - 2;
         let exit_y = h - 2;
         map.set(exit_x, exit_y, TileType::Exit);
         map.exit_pos = Some((exit_x, exit_y));
-        // Connect sewer to street
         for x in w - 6..=exit_x {
             map.set(x, h - 5, TileType::Floor);
         }
 
         let mut info = SpawnInfo::new((entry_x, h - 3));
         info.boss_position = Some((boss_bx + (boss_bx2 - boss_bx) / 2, boss_by + 2));
+        info.entrance_positions = entrance_positions;
 
         // Civilian and enemy spawns on streets
         let enemy_count = rng.gen_range(5usize..12);
@@ -100,7 +122,6 @@ impl LevelGenerator for DistrictGenerator {
                 info.streetlight_positions.push((sx, sy));
             }
         }
-        // Additional mid-block lights along the horizontal avenues.
         for &sy in &street_ys {
             for step in (10..w).step_by(10) {
                 info.streetlight_positions.push((step, sy));
