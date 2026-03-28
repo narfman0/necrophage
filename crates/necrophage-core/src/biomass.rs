@@ -4,6 +4,7 @@ use crate::combat::Health;
 use crate::movement::GridPos;
 use crate::player::ActiveEntity;
 use crate::possession::Controlled;
+use crate::world::GameState;
 
 #[derive(Resource, Default, Reflect)]
 pub struct Biomass(pub f32);
@@ -109,9 +110,11 @@ impl Plugin for BiomassPlugin {
                     pickup_orbs,
                     update_tier.after(pickup_orbs),
                     apply_tier_changes.after(update_tier),
-                    update_biomass_ui,
-                ),
-            );
+                )
+                .run_if(in_state(GameState::Playing)),
+            )
+            // UI update runs regardless of state so the HUD stays accurate.
+            .add_systems(Update, update_biomass_ui);
     }
 }
 

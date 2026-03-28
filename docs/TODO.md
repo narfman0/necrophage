@@ -18,50 +18,23 @@ These items verify the full 15-minute loop is actually playable end-to-end. Dist
 
 ---
 
-## Movement
-
-- [ ] Enemy chase AI (`combat.rs`: `enemy_chase_system`) currently only steps one axis — update to pick the better diagonal step when both axes are non-zero
-
----
-
-## Lighting (`camera.rs` / `levels/mod.rs`)
-
-- [ ] Jail level: spawn dim `PointLight` clusters at cell positions (flickering or static) to suggest overhead fluorescents
-- [ ] District level: spawn streetlight `PointLight` entities at the `streetlight_positions` provided in `SpawnInfo` — positions are already generated, just need to be spawned in the level system
-
----
-
 ## Combat
 
-### Boss enrage phase verification
-- [ ] Verify add count and HP match product plan (boss spawns adds at 50% HP enrage)
-
-### Knockback (plan item missing from code)
-- [ ] Add a `Knockback { direction: Vec2, force: f32, timer: f32 }` component
-- [ ] In `apply_damage`, when an entity takes damage, insert `Knockback` pointing away from the attacker
-- [ ] Add a `knockback_system` that translates the entity's `GridPos` by one tile in the knockback direction if the tile is walkable, then removes the component
-
 ### HP bar for possessed entities
-- [ ] HP bar currently only updates for `With<Enemy>` — possessed entities lose their HP bar; either keep it or remove it on possession
+- [ ] HP bar currently only updates for `With<Enemy>` — possessed entities had their bar removed on possession, but the `update_hp_bars` system still only tracks enemies; consider adding a separate HP bar or a health indicator for controlled entities
 
 ### Enemy sight and AI polish
-- [ ] Enemy sight range (currently `<= 8` in `enemy_sight_system`) should vary per enemy type — store `SightRange(u32)` component on each enemy
-- [ ] When enemy goes from Chase → Patrol (player out of range), add a short "lost" timer before resetting state so enemies don't immediately give up
+- [ ] When multiple enemies pile on the same tile during chase, add occupancy check to `enemy_chase_system` (currently enemies can stack on the same tile)
 
 ---
 
 ## Possession (`possession.rs`)
 
-- [ ] Possessed entities keep their enemy mesh color — insert a material change on possession to distinguish controlled entities (e.g. green tint matching the player)
-- [ ] Show infection progress bar above the corpse while holding E (a simple UI bar or `PointLight` pulse)
-- [ ] The `hold_e_infect` system resets `progress` to 0 whenever the player is not near any corpse, even while holding E near one — logic is correct but should reset only if key released
+- [ ] Show the infect-progress value in the 3D world (e.g. a `PointLight` pulse above the targeted corpse) in addition to the 2D HUD bar
 
 ---
 
 ## World / Tile Generation
-
-### Tile visual variation
-- [ ] Randomise floor tile shade slightly per-tile (±5% brightness using the level seed) so large open areas don't look uniform
 
 ### Door interaction
 - [ ] Doors are currently spawned as half-height cuboids but are walkable and have no open/close state — add a `Door` component and a system that changes the door mesh height/visibility when player walks into it (or a proximity trigger opens it)
@@ -76,28 +49,6 @@ These items verify the full 15-minute loop is actually playable end-to-end. Dist
 
 ---
 
-## Quest / Level Transition
-
-- [ ] After level transition, player and liberator transforms are not immediately updated (they still show at old world positions for one frame until lerp catches up) — force a transform sync immediately after teleporting `GridPos`
-
----
-
-## Endings (`ending.rs`)
-
-- [ ] Inspect current ending implementation and verify it triggers correctly at biomass ≥ 151 after `BossDefeated`
-- [ ] Ending screen is a text overlay — ensure it pauses all game systems (insert a `GameOver` state and run gameplay systems only in `in_state(GameOver::Playing)`)
-
----
-
-## HUD / UI
-
-- [ ] Biomass HUD shows current value and tier — add a control slots indicator: `Controlled: 1/2`
-- [ ] Add a small infection progress bar near the crosshair when holding E near a corpse
-- [ ] Dialogue box background has no border; add a thin colored border via a nested `Node` with `border` fields for readability
-- [ ] Quest step indicator: small text in top-right showing current objective
-
----
-
 ## Biomass / Growth
 
 - [ ] Parasite subtypes (Tendril ranged attacker at tier Medium, Brute tank at tier Large) — not yet implemented; add `ParasiteSubtype` enum and spawn option in the HUD
@@ -107,15 +58,6 @@ These items verify the full 15-minute loop is actually playable end-to-end. Dist
 
 ---
 
-## Code Quality / Bugs
+## Code Quality
 
-- [ ] `boss_ai_system` uses `params.p1()` which is re-queried each loop iteration via `ParamSet` — harmless but verbose; simplify with a direct `Query`
 - [ ] All `StandardMaterial` instances are created fresh on every entity spawn with no asset deduplication — store shared `Handle<StandardMaterial>` in a `TileMaterials` resource to save GPU memory
-
----
-
-## Testing
-
-- [ ] Add integration test: spawn a minimal Bevy `App` with only `MovementPlugin` + `WorldPlugin` and assert that a player cannot walk into a wall tile
-- [ ] Add test for `hold_e_infect`: verify slot limit is respected
-- [ ] Add test for civilian biomass drop: `Civilian` entity death spawns a `BiomassOrb` with value 2

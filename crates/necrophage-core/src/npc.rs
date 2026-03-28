@@ -5,7 +5,7 @@ use crate::dialogue::DialogueQueue;
 use crate::movement::GridPos;
 use crate::player::ActiveEntity;
 use crate::quest::QuestState;
-use crate::world::CurrentMap;
+use crate::world::{CurrentMap, GameState};
 
 #[derive(Component)]
 pub struct Npc;
@@ -31,7 +31,7 @@ pub struct NpcPlugin;
 impl Plugin for NpcPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_liberator)
-            .add_systems(Update, liberator_ai);
+            .add_systems(Update, liberator_ai.run_if(in_state(GameState::Playing)));
     }
 }
 

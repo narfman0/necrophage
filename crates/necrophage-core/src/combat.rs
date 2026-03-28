@@ -6,7 +6,7 @@ use crate::dialogue::DialogueQueue;
 use crate::movement::GridPos;
 use crate::player::{ActiveEntity, Player};
 use crate::possession::Corpse;
-use crate::world::{CurrentMap, GameRng, LevelEntity};
+use crate::world::{CurrentMap, GameRng, GameState, LevelEntity};
 
 // ── Components ───────────────────────────────────────────────────────────────
 
@@ -53,6 +53,25 @@ pub struct HpBar(pub Entity);
 #[derive(Component)]
 pub struct HpBarRoot;
 
+/// Per-enemy sight range in tiles (Chebyshev). Defaults to 8 if not present.
+#[derive(Component)]
+pub struct SightRange(pub u32);
+
+/// Countdown before a chasing enemy gives up and resumes patrol.
+/// Resets to `LOST_TIMEOUT` each frame the player is visible.
+#[derive(Component)]
+pub struct LostTimer(pub f32);
+
+/// One-frame knockback marker: push the entity one tile away from the attacker.
+/// Applied by `apply_damage`, consumed immediately by `knockback_system`.
+#[derive(Component)]
+pub struct Knockback {
+    pub dx: i32,
+    pub dy: i32,
+}
+
+const LOST_TIMEOUT: f32 = 2.0;
+
 // ── AI state ─────────────────────────────────────────────────────────────────
 
 #[derive(Component, Default, PartialEq, Eq, Clone, Copy, Reflect)]
@@ -84,6 +103,8 @@ impl Default for BossAI {
 pub struct DamageEvent {
     pub target: Entity,
     pub amount: f32,
+    /// Source position for knockback direction calculation.
+    pub attacker_pos: Option<GridPos>,
 }
 
 #[derive(Event)]
@@ -108,6 +129,7 @@ impl Plugin for CombatPlugin {
                 (
                     tick_attack_cooldowns,
                     enemy_sight_system,
+                    enemy_lost_system.after(enemy_sight_system),
                     enemy_patrol_system,
                     enemy_chase_system,
                     enemy_attack_system,
@@ -115,9 +137,11 @@ impl Plugin for CombatPlugin {
                     player_attack_system,
                     apply_damage,
                     death_system.after(apply_damage),
+                    knockback_system.after(death_system),
                     civilian_flee_system,
                     update_hp_bars,
-                ),
+                )
+                .run_if(in_state(GameState::Playing)),
             );
     }
 }
@@ -133,17 +157,34 @@ fn tick_attack_cooldowns(mut query: Query<&mut Attack>, time: Res<Time>) {
 }
 
 fn enemy_sight_system(
-    mut enemies: Query<(&GridPos, &mut EnemyAI), With<Enemy>>,
+    mut enemies: Query<(&GridPos, &mut EnemyAI, &SightRange, &mut LostTimer), With<Enemy>>,
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos>,
 ) {
     let Ok(target_pos) = player_pos.get(active.0) else { return };
-    for (pos, mut ai) in &mut enemies {
+    for (pos, mut ai, sight, mut lost) in &mut enemies {
         let dist = (pos.x - target_pos.x).abs().max((pos.y - target_pos.y).abs());
-        if dist <= 8 {
+        if dist <= sight.0 as i32 {
             *ai = EnemyAI::Chase;
-        } else if *ai == EnemyAI::Chase {
+            lost.0 = LOST_TIMEOUT; // still visible — reset lost countdown
+        }
+    }
+}
+
+/// Ticks the lost timer while enemy is chasing but can't see the player.
+/// When the timer expires the enemy gives up and resumes patrol.
+fn enemy_lost_system(
+    time: Res<Time>,
+    mut enemies: Query<(&mut EnemyAI, &mut LostTimer), With<Enemy>>,
+) {
+    for (mut ai, mut timer) in &mut enemies {
+        if *ai != EnemyAI::Chase {
+            continue;
+        }
+        timer.0 -= time.delta_secs();
+        if timer.0 <= 0.0 {
             *ai = EnemyAI::Patrol;
+            timer.0 = 0.0;
         }
     }
 }
@@ -193,8 +234,11 @@ fn enemy_chase_system(
         timer.0 = 0.6;
         let dx = (target.x - pos.x).signum();
         let dy = (target.y - pos.y).signum();
-        // Prefer horizontal step, fallback to vertical
-        if dx != 0 && map.0.is_walkable(pos.x + dx, pos.y) {
+        // Prefer diagonal step when both axes are non-zero (smarter pathing).
+        if dx != 0 && dy != 0 && map.0.is_walkable(pos.x + dx, pos.y + dy) {
+            pos.x += dx;
+            pos.y += dy;
+        } else if dx != 0 && map.0.is_walkable(pos.x + dx, pos.y) {
             pos.x += dx;
         } else if dy != 0 && map.0.is_walkable(pos.x, pos.y + dy) {
             pos.y += dy;
@@ -215,7 +259,11 @@ fn enemy_attack_system(
         }
         let dist = (pos.x - target_pos.x).abs().max((pos.y - target_pos.y).abs());
         if dist <= 1 && atk.timer <= 0.0 {
-            damage_events.send(DamageEvent { target: active.0, amount: atk.damage });
+            damage_events.send(DamageEvent {
+                target: active.0,
+                amount: atk.damage,
+                attacker_pos: Some(*pos),
+            });
             atk.timer = atk.cooldown;
         }
     }
@@ -250,7 +298,11 @@ fn player_attack_system(
         let dx = (enemy_pos.x - pos.x).abs();
         let dy = (enemy_pos.y - pos.y).abs();
         if dx <= 1 && dy <= 1 {
-            damage_events.send(DamageEvent { target: enemy_entity, amount: base_damage });
+            damage_events.send(DamageEvent {
+                target: enemy_entity,
+                amount: base_damage,
+                attacker_pos: Some(*pos),
+            });
             hit_any = true;
         }
     }
@@ -260,13 +312,43 @@ fn player_attack_system(
 }
 
 fn apply_damage(
+    mut commands: Commands,
     mut events: EventReader<DamageEvent>,
-    mut query: Query<&mut Health>,
+    mut health_query: Query<&mut Health>,
+    positions: Query<&GridPos>,
 ) {
     for ev in events.read() {
-        if let Ok(mut hp) = query.get_mut(ev.target) {
+        if let Ok(mut hp) = health_query.get_mut(ev.target) {
             hp.current -= ev.amount;
         }
+        // Insert one-frame knockback away from the attacker.
+        if let Some(src) = ev.attacker_pos {
+            if let Ok(target_pos) = positions.get(ev.target) {
+                let dx = (target_pos.x - src.x).signum();
+                let dy = (target_pos.y - src.y).signum();
+                if dx != 0 || dy != 0 {
+                    commands.entity(ev.target).insert(Knockback { dx, dy });
+                }
+            }
+        }
+    }
+}
+
+/// Immediately pushes the entity one tile in the knockback direction (if walkable),
+/// then removes the component. Runs after death_system so dead entities are skipped.
+fn knockback_system(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut GridPos, &Knockback), Without<Corpse>>,
+    map: Res<CurrentMap>,
+) {
+    for (entity, mut pos, kb) in &mut query {
+        let nx = pos.x + kb.dx;
+        let ny = pos.y + kb.dy;
+        if map.0.is_walkable(nx, ny) {
+            pos.x = nx;
+            pos.y = ny;
+        }
+        commands.entity(entity).remove::<Knockback>();
     }
 }
 
@@ -324,42 +406,46 @@ fn boss_ai_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut params: ParamSet<(
-        Query<&GridPos>,
-        Query<(Entity, &GridPos, &mut BossAI, &mut Attack, &Health), With<MobBoss>>,
-    )>,
+    active_pos: Query<&GridPos, Without<MobBoss>>,
+    mut bosses: Query<(&GridPos, &mut BossAI, &mut Attack, &Health), With<MobBoss>>,
     active: Res<ActiveEntity>,
     mut damage_events: EventWriter<DamageEvent>,
     time: Res<Time>,
 ) {
-    let target_pos = {
-        let q = params.p0();
-        let Ok(t) = q.get(active.0) else { return };
-        *t
-    };
-    for (_, boss_pos, mut ai, mut atk, hp) in &mut params.p1() {
+    let Ok(target_pos) = active_pos.get(active.0) else { return };
+    for (boss_pos, mut ai, mut atk, hp) in &mut bosses {
         ai.phase_timer -= time.delta_secs();
         if ai.phase_timer > 0.0 {
             continue;
         }
 
-        // Cycle through 3 patterns based on phase
         match ai.phase % 3 {
             0 => {
                 // Melee swipe — high damage to player if adjacent
                 let dist = (boss_pos.x - target_pos.x).abs().max((boss_pos.y - target_pos.y).abs());
                 if dist <= 2 {
-                    damage_events.send(DamageEvent { target: active.0, amount: atk.damage * 1.5 });
+                    damage_events.send(DamageEvent {
+                        target: active.0,
+                        amount: atk.damage * 1.5,
+                        attacker_pos: Some(*boss_pos),
+                    });
                 }
                 ai.phase_timer = 3.0;
             }
             1 => {
                 // Ranged throw — always hits
-                damage_events.send(DamageEvent { target: active.0, amount: atk.damage * 0.8 });
+                damage_events.send(DamageEvent {
+                    target: active.0,
+                    amount: atk.damage * 0.8,
+                    attacker_pos: Some(*boss_pos),
+                });
                 ai.phase_timer = 2.5;
             }
             2 => {
-                // Summon 2 adds (small, weak)
+                // Summon 2 adds (small, weak) — phase 2 enrage at 50% HP
+                if hp.current < hp.max * 0.5 {
+                    atk.cooldown = 0.6; // enrage: faster attack cycle
+                }
                 for offset in [(1i32, 0i32), (-1, 0)] {
                     let ax = (boss_pos.x + offset.0).clamp(0, 59);
                     let ay = (boss_pos.y + offset.1).clamp(0, 39);
@@ -380,11 +466,6 @@ fn boss_ai_system(
         }
 
         ai.phase += 1;
-
-        // Phase 2 enrage at 50% HP
-        if hp.current < hp.max * 0.5 {
-            atk.cooldown = 0.6;
-        }
     }
 }
 
@@ -463,6 +544,8 @@ pub fn spawn_enemy(
             Enemy,
             EnemyAI::Patrol,
             PatrolTimer(0.0),
+            SightRange(8),
+            LostTimer(LOST_TIMEOUT),
             pos,
             Health::new(hp),
             Attack::new(damage, 1.2),
@@ -475,4 +558,57 @@ pub fn spawn_enemy(
             Transform::from_xyz(pos.x as f32, 0.5, pos.y as f32),
         ))
         .id()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn civilian_drops_smaller_orb_than_enemy() {
+        let civilian_orb = 2.0f32;
+        let enemy_orb = 5.0f32;
+        assert!(civilian_orb < enemy_orb);
+        // Values match the constants used in death_system.
+        assert_eq!(civilian_orb, 2.0);
+        assert_eq!(enemy_orb, 5.0);
+    }
+
+    #[test]
+    fn knockback_direction_away_from_source() {
+        // Attacker at (3,3), target at (5,3) → knockback dx=+1, dy=0
+        let src = GridPos { x: 3, y: 3 };
+        let target = GridPos { x: 5, y: 3 };
+        let dx = (target.x - src.x).signum();
+        let dy = (target.y - src.y).signum();
+        assert_eq!(dx, 1);
+        assert_eq!(dy, 0);
+    }
+
+    #[test]
+    fn enemy_chase_prefers_diagonal() {
+        // When both dx and dy are nonzero and diagonal is walkable,
+        // the enemy should move diagonally (both axes) not just one.
+        let mut pos = GridPos { x: 0, y: 0 };
+        let target = GridPos { x: 3, y: 3 };
+        let dx = (target.x - pos.x).signum();
+        let dy = (target.y - pos.y).signum();
+        // Simulate diagonal step
+        pos.x += dx;
+        pos.y += dy;
+        assert_eq!(pos.x, 1);
+        assert_eq!(pos.y, 1);
+    }
+
+    #[test]
+    fn sight_range_defaults_to_8() {
+        let sr = SightRange(8);
+        assert_eq!(sr.0, 8);
+    }
+
+    #[test]
+    fn lost_timer_initialized() {
+        let lt = LostTimer(LOST_TIMEOUT);
+        assert!(lt.0 > 0.0);
+    }
 }

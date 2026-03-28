@@ -44,9 +44,11 @@ fn spawn_dialogue_ui(mut commands: Commands) {
                 left: Val::Px(20.0),
                 right: Val::Px(20.0),
                 padding: UiRect::all(Val::Px(12.0)),
+                border: UiRect::all(Val::Px(2.0)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
+            BorderColor(Color::srgb(0.3, 0.7, 0.4)),
             Visibility::Hidden,
             DialogueBox,
         ))

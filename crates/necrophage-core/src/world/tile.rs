@@ -30,18 +30,23 @@ pub fn spawn_tile(
 ) -> Entity {
     let pos = tile_to_world(x, y);
     match tile_type {
-        TileType::Floor => commands
-            .spawn((
-                Mesh3d(meshes.add(Cuboid::new(1.0, 0.1, 1.0))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.45, 0.45, 0.45),
-                    perceptual_roughness: 0.9,
-                    metallic: 0.0,
-                    ..default()
-                })),
-                Transform::from_translation(pos + Vec3::new(0.0, -0.05, 0.0)),
-            ))
-            .id(),
+        TileType::Floor => {
+            // Deterministic per-tile shade variation ±5% so large rooms don't look uniform.
+            let hash = (x as u32).wrapping_mul(2_654_435_761u32) ^ (y as u32).wrapping_mul(1_013_904_223u32);
+            let shade = 0.42 + (hash & 0xFF) as f32 / 255.0 * 0.06; // 0.42..0.48
+            commands
+                .spawn((
+                    Mesh3d(meshes.add(Cuboid::new(1.0, 0.1, 1.0))),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: Color::srgb(shade, shade, shade),
+                        perceptual_roughness: 0.9,
+                        metallic: 0.0,
+                        ..default()
+                    })),
+                    Transform::from_translation(pos + Vec3::new(0.0, -0.05, 0.0)),
+                ))
+                .id()
+        }
         TileType::Wall => commands
             .spawn((
                 Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),

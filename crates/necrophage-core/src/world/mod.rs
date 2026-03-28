@@ -25,12 +25,22 @@ impl Default for GameRng {
     }
 }
 
+/// Top-level game state. Gameplay systems run only in `Playing`.
+/// `GameOver` freezes all input/AI and shows the ending overlay.
+#[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub enum GameState {
+    #[default]
+    Playing,
+    GameOver,
+}
+
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         // Insert an empty map resource; LevelPlugin will populate it on Startup.
         app.insert_resource(CurrentMap(TileMap::new(1, 1, TileType::Wall)))
-            .init_resource::<GameRng>();
+            .init_resource::<GameRng>()
+            .init_state::<GameState>();
     }
 }

@@ -5,7 +5,7 @@ use crate::dialogue::DialogueQueue;
 use crate::movement::GridPos;
 use crate::npc::Liberator;
 use crate::player::ActiveEntity;
-use crate::world::CurrentMap;
+use crate::world::{CurrentMap, GameState};
 
 #[derive(Resource, PartialEq, Eq, Clone, Copy, Debug, Default)]
 pub enum QuestState {
@@ -65,7 +65,8 @@ impl Plugin for QuestPlugin {
                     check_confrontation,
                     check_betrayal,
                     handle_death_for_quest,
-                ),
+                )
+                .run_if(in_state(GameState::Playing)),
             );
     }
 }

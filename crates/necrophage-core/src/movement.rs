@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::camera::CameraTarget;
 use crate::player::ActiveEntity;
 use crate::possession::Controlled;
-use crate::world::{map::TileMap, CurrentMap};
+use crate::world::{map::TileMap, CurrentMap, GameState};
 use crate::world::tile::tile_to_world;
 
 #[derive(Component, Clone, Copy, Debug, Reflect)]
@@ -45,10 +45,12 @@ impl Plugin for MovementPlugin {
                     tick_move_cooldown,
                     wasd_input.after(tick_move_cooldown),
                     resolve_movement.after(wasd_input),
-                    lerp_transforms.after(resolve_movement),
                     tab_cycle_entity,
-                ),
-            );
+                )
+                .run_if(in_state(GameState::Playing)),
+            )
+            // lerp_transforms always runs so entities don't snap during the ending.
+            .add_systems(Update, lerp_transforms);
     }
 }
 
@@ -171,6 +173,24 @@ mod tests {
             m.set(9, y, TileType::Wall);
         }
         m
+    }
+
+    #[test]
+    fn player_cannot_walk_into_wall() {
+        let mut m = TileMap::new(10, 10, TileType::Floor);
+        for y in 0..10 {
+            m.set(9, y, TileType::Wall);
+        }
+        let mut pos = GridPos { x: 8, y: 5 };
+        let (dx, dy) = (1i32, 0i32); // move right into wall
+        let nx = pos.x + dx;
+        let ny = pos.y + dy;
+        if m.is_walkable(nx, ny) {
+            pos.x = nx;
+            pos.y = ny;
+        }
+        assert_eq!(pos.x, 8, "player should be blocked by wall");
+        assert_eq!(pos.y, 5);
     }
 
     #[test]

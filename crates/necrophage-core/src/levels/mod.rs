@@ -18,7 +18,7 @@ use crate::player::{ActiveEntity, Player};
 use crate::quest::LevelTransitionEvent;
 use crate::world::{CurrentMap, GameRng, LevelEntity};
 use crate::world::map::TileMap;
-use crate::world::tile::spawn_tile;
+use crate::world::tile::{spawn_tile, tile_to_world};
 use building::{BuildingGenerator};
 use district::DistrictGenerator;
 use generator::{BuildingKind, LevelGenerator, SpawnInfo};
@@ -174,9 +174,9 @@ fn handle_transition(
     hp_bars: Query<Entity, With<HpBarRoot>>,
     seed: Res<LevelSeed>,
     active: Res<ActiveEntity>,
-    mut player_pos: Query<&mut GridPos, With<Player>>,
+    mut player_query: Query<(&mut GridPos, &mut Transform), With<Player>>,
     mut liberator_query: Query<
-        (&mut GridPos, &mut LiberatorState, &mut ScriptTimer),
+        (&mut GridPos, &mut Transform, &mut LiberatorState, &mut ScriptTimer),
         (With<Liberator>, Without<Player>),
     >,
     mut dialogue: ResMut<DialogueQueue>,
@@ -207,14 +207,17 @@ fn handle_transition(
             ));
         }
 
-        if let Ok(mut ppos) = player_pos.get_mut(active.0) {
+        if let Ok((mut ppos, mut ptf)) = player_query.get_mut(active.0) {
             ppos.x = info.player_start.0;
             ppos.y = info.player_start.1;
+            // Snap transform immediately so the lerp doesn't show the old position.
+            ptf.translation = tile_to_world(ppos.x, ppos.y) + Vec3::new(0.0, 0.5, 0.0);
         }
 
-        if let Ok((mut lpos, mut lstate, mut ltimer)) = liberator_query.get_single_mut() {
+        if let Ok((mut lpos, mut ltf, mut lstate, mut ltimer)) = liberator_query.get_single_mut() {
             lpos.x = info.player_start.0 + 2;
             lpos.y = info.player_start.1;
+            ltf.translation = tile_to_world(lpos.x, lpos.y) + Vec3::new(0.0, 0.5, 0.0);
             *lstate = LiberatorState::AwaitingPlayer;
             ltimer.0 = 0.0;
         }
@@ -309,7 +312,7 @@ fn enter_building_system(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut events: EventReader<EnterBuildingEvent>,
     level_entities: Query<(Entity, Option<&GridPos>), With<LevelEntity>>,
-    mut player_pos: Query<&mut GridPos, With<Player>>,
+    mut player_query: Query<(&mut GridPos, &mut Transform), With<Player>>,
     active: Res<ActiveEntity>,
     mut level_stack: ResMut<LevelStack>,
     mut level_cache: ResMut<LevelCache>,
@@ -317,7 +320,9 @@ fn enter_building_system(
     seed: Res<LevelSeed>,
 ) {
     for ev in events.read() {
-        let player_gp = player_pos.get(active.0).ok().copied().unwrap_or(GridPos { x: 0, y: 0 });
+        let player_gp = player_query.get(active.0)
+            .map(|(gp, _)| *gp)
+            .unwrap_or(GridPos { x: 0, y: 0 });
 
         // Push current level + player return pos onto stack.
         level_stack.0.push((current_level.0.clone(), player_gp));
@@ -395,10 +400,11 @@ fn enter_building_system(
                 .insert(MobBoss).insert(BossAI::default()).insert(LevelEntity);
         }
 
-        // Teleport player to building entry.
-        if let Ok(mut ppos) = player_pos.get_mut(active.0) {
+        // Teleport player to building entry and snap transform immediately.
+        if let Ok((mut ppos, mut ptf)) = player_query.get_mut(active.0) {
             ppos.x = info.player_start.0;
             ppos.y = info.player_start.1;
+            ptf.translation = tile_to_world(ppos.x, ppos.y) + Vec3::new(0.0, 0.5, 0.0);
         }
 
         commands.insert_resource(CurrentMap(map));
@@ -414,7 +420,7 @@ fn exit_level_system(
     level_entities: Query<Entity, (With<LevelEntity>, Without<Suspended>)>,
     hp_bars: Query<Entity, With<HpBarRoot>>,
     suspended: Query<Entity, With<Suspended>>,
-    mut player_pos: Query<&mut GridPos, With<Player>>,
+    mut player_query: Query<(&mut GridPos, &mut Transform), With<Player>>,
     active: Res<ActiveEntity>,
     mut level_stack: ResMut<LevelStack>,
     mut current_level: ResMut<CurrentLevelId>,
@@ -433,8 +439,9 @@ fn exit_level_system(
 
         // Pop return location from stack.
         if let Some((parent_level_id, return_pos)) = level_stack.0.pop() {
-            if let Ok(mut ppos) = player_pos.get_mut(active.0) {
+            if let Ok((mut ppos, mut ptf)) = player_query.get_mut(active.0) {
                 *ppos = return_pos;
+                ptf.translation = tile_to_world(ppos.x, ppos.y) + Vec3::new(0.0, 0.5, 0.0);
             }
             // Restore the parent map from cache.
             if let Some(cached) = cached_maps.0.get(&parent_level_id) {
