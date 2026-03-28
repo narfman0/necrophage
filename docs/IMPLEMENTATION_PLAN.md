@@ -47,14 +47,14 @@ crates/
 
 ### 1.3 Tasks
 
-- [ ] Convert root `Cargo.toml` to a workspace manifest with `members = ["crates/necrophage-core", "crates/necrophage-gui"]`
-- [ ] Create `crates/necrophage-core/Cargo.toml` — depends on `bevy` with `default-features = false` plus only the ECS/math feature flags needed for logic
-- [ ] Move all `src/*.rs` and `src/levels/`, `src/world/` into `crates/necrophage-core/src/`
-- [ ] Create `crates/necrophage-gui/Cargo.toml` — depends on `necrophage-core` and full `bevy = "0.15"`
-- [ ] Slim `main.rs` down to `App::new().add_plugins(DefaultPlugins...).add_plugins(NecrophageCorePlugin)...run()`
-- [ ] Add a top-level `NecrophageCorePlugin` in `lib.rs` that registers all gameplay plugins
-- [ ] Verify `cargo check -p necrophage-core` compiles without a display
-- [ ] Verify `cargo run -p necrophage-gui` runs normally
+- [x] Convert root `Cargo.toml` to a workspace manifest with `members = ["crates/necrophage-core", "crates/necrophage-gui"]`
+- [x] Create `crates/necrophage-core/Cargo.toml` — depends on `bevy` with `default-features = false` plus only the ECS/math feature flags needed for logic
+- [x] Move all `src/*.rs` and `src/levels/`, `src/world/` into `crates/necrophage-core/src/`
+- [x] Create `crates/necrophage-gui/Cargo.toml` — depends on `necrophage-core` and full `bevy = "0.15"`
+- [x] Slim `main.rs` down to `App::new().add_plugins(DefaultPlugins...).add_plugins(NecrophageCorePlugin)...run()`
+- [x] Add a top-level `NecrophageCorePlugin` in `lib.rs` that registers all gameplay plugins
+- [x] Verify `cargo check -p necrophage-core` compiles without a display
+- [x] Verify `cargo run -p necrophage-gui` runs normally
 
 ---
 
@@ -141,10 +141,10 @@ tests::control_slot_accounting
 
 ### 2.2 Tasks
 
-- [ ] Add `[dev-dependencies]` section to `necrophage-core/Cargo.toml` with any needed test helpers
-- [ ] Write `#[cfg(test)]` modules in each file listed above
-- [ ] Add `cargo test -p necrophage-core` to CI (or document how to run in CLAUDE.md)
-- [ ] Confirm all tests pass headlessly
+- [x] Add `[dev-dependencies]` section to `necrophage-core/Cargo.toml` with any needed test helpers
+- [x] Write `#[cfg(test)]` modules in each file listed above
+- [x] Add `cargo test -p necrophage-core` to CI (or document how to run in CLAUDE.md)
+- [x] Confirm all tests pass headlessly
 
 ---
 
@@ -185,12 +185,12 @@ src/debug/
 
 ### 3.3 Tasks
 
-- [ ] Create `crates/necrophage-gui/src/debug/` directory and module files
-- [ ] Implement `ConsolePlugin` with toggle, input capture, and scrollable history UI
-- [ ] Implement `CommandRegistry` resource and `register_command` API
-- [ ] Implement all built-in commands listed above
-- [ ] Gate entire `DebugPlugin` behind a `debug` Cargo feature so release builds exclude it
-- [ ] Wire `DebugPlugin` into `main.rs` only when `#[cfg(feature = "debug")]`
+- [x] Create `crates/necrophage-gui/src/debug/` directory and module files
+- [x] Implement `ConsolePlugin` with toggle, input capture, and scrollable history UI
+- [x] Implement `CommandRegistry` resource and `register_command` API
+- [x] Implement all built-in commands listed above
+- [x] Gate entire `DebugPlugin` behind a `debug` Cargo feature so release builds exclude it
+- [x] Wire `DebugPlugin` into `main.rs` only when `#[cfg(feature = "debug")]`
 
 ---
 
@@ -216,11 +216,11 @@ bevy-inspector-egui = "0.27"   # matches Bevy 0.15
 
 ### 4.3 Tasks
 
-- [ ] Add `bevy-inspector-egui` to `necrophage-gui/Cargo.toml` under the `debug` feature
-- [ ] Create `src/debug/inspector.rs` with `InspectorPlugin`
-- [ ] Register all resources with `app.register_type::<Biomass>()` etc. (requires `#[derive(Reflect)]` on each resource/component)
-- [ ] Add `#[derive(Reflect)]` to: `Biomass`, `BiomassTier`, `ControlSlots`, `Health`, `Attack`, `GridPos`, `EnemyAI`, `QuestStep` (or equivalent)
-- [ ] Wire `InspectorPlugin` into `DebugPlugin`
+- [x] Add `bevy-inspector-egui` to `necrophage-gui/Cargo.toml` under the `debug` feature
+- [x] Create `src/debug/inspector.rs` with `InspectorPlugin`
+- [x] Register all resources with `app.register_type::<Biomass>()` etc. (requires `#[derive(Reflect)]` on each resource/component)
+- [x] Add `#[derive(Reflect)]` to: `Biomass`, `BiomassTier`, `ControlSlots`, `Health`, `Attack`, `GridPos`, `EnemyAI`, `QuestStep` (or equivalent)
+- [x] Wire `InspectorPlugin` into `DebugPlugin`
 
 ---
 
@@ -266,13 +266,13 @@ Response:
 
 ### 5.4 Tasks
 
-- [ ] Enable `bevy_remote` in `necrophage-gui/Cargo.toml` (it is a Bevy feature flag: `bevy/bevy_remote`)
-- [ ] Create `src/debug/remote.rs` with `RemoteApiPlugin`
-- [ ] Register `necrophage/command` handler that dispatches into `CommandRegistry`
-- [ ] Register `necrophage/state` handler that reads `Biomass`, `BiomassTier`, `ActiveEntity` health, and current level
-- [ ] Register `necrophage/entities` handler
+- [x] Enable `bevy_remote` in `necrophage-gui/Cargo.toml` (it is a Bevy feature flag: `bevy/bevy_remote`)
+- [x] Create `src/debug/remote.rs` with `RemoteApiPlugin`
+- [x] Register `necrophage/command` handler that dispatches into `CommandRegistry`
+- [x] Register `necrophage/state` handler that reads `Biomass`, `BiomassTier`, `ActiveEntity` health, position, and quest step
+- [x] Register `necrophage/entities` handler
 - [ ] Register `necrophage/spawn_enemy` handler
-- [ ] Gate `RemoteApiPlugin` behind `debug` feature
+- [x] Gate `RemoteApiPlugin` behind `debug` feature
 - [ ] Document usage in `docs/DEBUG_API.md`
 
 ---

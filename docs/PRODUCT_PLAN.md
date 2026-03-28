@@ -184,16 +184,16 @@ EndingPlugin
 | ----- | ---------------------------- | ------------------------------------------------------ | ------ |
 | 0     | Foundation                   | Project compiles                                       | ✅ done |
 | 0.5   | Workspace + debug toolchain  | Cargo workspace, unit tests, console, inspector, BRP  | ✅ done |
-| 1     | Tile world plugin            | Jail tile grid renders isometrically                   |        |
-| 2     | Camera plugin                | Camera follows active entity                           |        |
-| 3     | Player & movement            | WASD moves player, walls block                         |        |
-| 4     | Biomass & growth             | Orb pickup, player visually grows                      |        |
-| 5     | Combat                       | Enemy chases, attacks, dies                            |        |
-| 6     | Infection & possession       | Hold E to possess, Tab to switch                       |        |
-| 7     | NPC & dialogue               | Liberator breaks out, dialogue shows                   |        |
-| 8     | Quest system                 | Steps advance through escape                           |        |
-| 9     | Procedural level gen         | Jail + district generate, transition works             |        |
-| 10    | Ending                       | Biomass 151 + boss dead = ending screen                |        |
+| 1     | Tile world plugin            | Jail tile grid renders isometrically                   | ✅ done |
+| 2     | Camera plugin                | Camera follows active entity, shake, zoom              | ✅ done |
+| 3     | Player & movement            | WASD moves player, 8-dir, walls block, smooth lerp     | ✅ done |
+| 4     | Biomass & growth             | Orb pickup, player visually grows, all controlled scale| ✅ done |
+| 5     | Combat                       | Enemy chases, attacks, dies, civilian drops, knockback pending | 🔄 mostly done |
+| 6     | Infection & possession       | Hold E to possess, Tab to switch                       | ✅ done |
+| 7     | NPC & dialogue               | Liberator breaks out, dialogue shows                   | ✅ done |
+| 8     | Quest system                 | Steps advance, betrayal path, single-fire guard        | ✅ done |
+| 9     | Procedural level gen         | Jail + district + buildings, stack-based entry/exit    | ✅ done |
+| 10    | Ending                       | Biomass 151 + boss dead = ending screen                | 🔄 pending verify |
 
 ---
 
