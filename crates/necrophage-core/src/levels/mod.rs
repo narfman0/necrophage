@@ -13,7 +13,7 @@ use crate::movement::GridPos;
 use crate::npc::{Liberator, LiberatorState, ScriptTimer};
 use crate::player::{ActiveEntity, Player};
 use crate::quest::LevelTransitionEvent;
-use crate::world::{CurrentMap, GameRng};
+use crate::world::{CurrentMap, GameRng, LevelEntity};
 use district::DistrictGenerator;
 use generator::LevelGenerator;
 use jail::JailGenerator;
@@ -27,10 +27,6 @@ pub enum LevelState {
     Jail,
     District,
 }
-
-/// Marker for entities that should be despawned on level transition
-#[derive(Component)]
-pub struct LevelEntity;
 
 pub struct LevelPlugin;
 

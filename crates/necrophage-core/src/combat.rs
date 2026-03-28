@@ -2,10 +2,11 @@ use bevy::prelude::*;
 use rand::Rng;
 
 use crate::biomass::{BiomassOrb, BiomassTier, OrbValue};
+use crate::dialogue::DialogueQueue;
 use crate::movement::GridPos;
 use crate::player::{ActiveEntity, Player};
 use crate::possession::Corpse;
-use crate::world::{CurrentMap, GameRng};
+use crate::world::{CurrentMap, GameRng, LevelEntity};
 
 // ── Components ───────────────────────────────────────────────────────────────
 
@@ -229,8 +230,13 @@ fn player_attack_system(
     enemies: Query<(Entity, &GridPos), With<Enemy>>,
     tier: Res<BiomassTier>,
     mut damage_events: EventWriter<DamageEvent>,
+    dialogue: Res<DialogueQueue>,
 ) {
     if !keys.just_pressed(KeyCode::Space) && !buttons.just_pressed(MouseButton::Left) {
+        return;
+    }
+    // Space is consumed by dialogue when a line is showing; don't also attack.
+    if keys.just_pressed(KeyCode::Space) && !dialogue.lines.is_empty() {
         return;
     }
     let Ok(pos) = active_pos.get(active.0) else { return };
@@ -266,19 +272,33 @@ fn apply_damage(
 
 fn death_system(
     mut commands: Commands,
-    query: Query<(Entity, &Health, &GridPos), (Without<Player>, Without<Corpse>)>,
+    query: Query<(Entity, &Health, &GridPos, Option<&Civilian>), (Without<Player>, Without<Corpse>)>,
     mut death_events: EventWriter<EntityDied>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut dialogue: ResMut<DialogueQueue>,
+    mut civilian_killed: Local<bool>,
 ) {
-    for (entity, hp, pos) in &query {
+    for (entity, hp, pos, is_civilian) in &query {
         if hp.current <= 0.0 {
             death_events.send(EntityDied { entity, pos: *pos });
+
+            // Civilians drop a smaller orb (2) as they're non-combatants.
+            let orb_value = if is_civilian.is_some() { 2.0 } else { 5.0 };
+
+            // One-shot guilt dialogue when the player first kills a civilian.
+            if is_civilian.is_some() && !*civilian_killed {
+                *civilian_killed = true;
+                dialogue.push(
+                    "Liberator",
+                    "That was a civilian. You didn't have to do that.",
+                );
+            }
 
             // Spawn orb
             commands.spawn((
                 BiomassOrb,
-                OrbValue(5.0),
+                OrbValue(orb_value),
                 *pos,
                 Mesh3d(meshes.add(Sphere::new(0.25))),
                 MeshMaterial3d(materials.add(StandardMaterial {
@@ -352,8 +372,7 @@ fn boss_ai_system(
                         5.0,
                         Color::srgb(0.5, 0.0, 0.6),
                     );
-                    // adds don't persist across level, no LevelEntity needed here since boss room
-                    let _ = e;
+                    commands.entity(e).insert(LevelEntity);
                 }
                 ai.phase_timer = 5.0;
             }

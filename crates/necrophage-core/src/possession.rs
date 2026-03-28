@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::biomass::ControlSlots;
 use crate::camera::CameraTarget;
-use crate::combat::{Attack, Enemy, EnemyAI, PatrolTimer};
+use crate::combat::{Attack, Enemy, EnemyAI, HpBar, PatrolTimer};
 use crate::movement::MoveIntent;
 use crate::movement::GridPos;
 use crate::player::ActiveEntity;
@@ -31,12 +31,16 @@ impl Plugin for PossessionPlugin {
 
 fn corpse_decay(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut Corpse)>,
+    mut query: Query<(Entity, &mut Corpse, Option<&HpBar>)>,
     time: Res<Time>,
 ) {
-    for (entity, mut corpse) in &mut query {
+    for (entity, mut corpse, hp_bar) in &mut query {
         corpse.timer -= time.delta_secs();
         if corpse.timer <= 0.0 {
+            // Also despawn the floating HP bar entity if it was never cleaned up.
+            if let Some(bar) = hp_bar {
+                commands.entity(bar.0).despawn_recursive();
+            }
             commands.entity(entity).despawn_recursive();
         }
     }

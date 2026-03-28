@@ -10,6 +10,10 @@ use tile::TileType;
 #[derive(Resource)]
 pub struct CurrentMap(pub TileMap);
 
+/// Marker component for entities that should be despawned on level transition.
+#[derive(Component)]
+pub struct LevelEntity;
+
 /// Shared seeded RNG for all gameplay systems. Seeded from LevelSeed on startup
 /// so results are reproducible. Never use rand::thread_rng() in gameplay code.
 #[derive(Resource)]
