@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::combat::Health;
 use crate::movement::GridPos;
 use crate::player::ActiveEntity;
+use crate::possession::Controlled;
 
 #[derive(Resource, Default, Reflect)]
 pub struct Biomass(pub f32);
@@ -123,9 +124,8 @@ fn pickup_orbs(
 ) {
     let Ok(pos) = active_pos.get(active.0) else { return };
     for (orb_entity, orb_pos, orb_val) in &orbs {
-        let dx = (orb_pos.x - pos.x).abs();
-        let dy = (orb_pos.y - pos.y).abs();
-        if dx <= 1 && dy <= 1 {
+        let dist = (orb_pos.x - pos.x).abs().max((orb_pos.y - pos.y).abs());
+        if dist <= 2 {
             biomass.0 += orb_val.0;
             commands.entity(orb_entity).despawn();
         }
@@ -148,18 +148,21 @@ fn update_tier(
 
 fn apply_tier_changes(
     mut events: EventReader<TierChanged>,
-    active: Res<ActiveEntity>,
+    controlled: Query<Entity, With<Controlled>>,
     mut transforms: Query<&mut Transform>,
     mut healths: Query<&mut Health>,
 ) {
     for ev in events.read() {
-        if let Ok(mut t) = transforms.get_mut(active.0) {
-            t.scale = ev.new.scale();
-        }
-        if let Ok(mut h) = healths.get_mut(active.0) {
-            let base = 50.0;
-            h.max = base * ev.new.hp_bonus();
-            h.current = h.current.min(h.max);
+        // Apply scale and HP to ALL controlled entities, not just the active one.
+        for entity in &controlled {
+            if let Ok(mut t) = transforms.get_mut(entity) {
+                t.scale = ev.new.scale();
+            }
+            if let Ok(mut h) = healths.get_mut(entity) {
+                let base = 50.0;
+                h.max = base * ev.new.hp_bonus();
+                h.current = h.current.min(h.max);
+            }
         }
     }
 }

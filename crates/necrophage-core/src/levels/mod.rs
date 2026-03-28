@@ -14,6 +14,7 @@ use crate::npc::{Liberator, LiberatorState, ScriptTimer};
 use crate::player::{ActiveEntity, Player};
 use crate::quest::LevelTransitionEvent;
 use crate::world::{CurrentMap, GameRng, LevelEntity};
+use crate::world::tile::spawn_tile;
 use district::DistrictGenerator;
 use generator::LevelGenerator;
 use jail::JailGenerator;
@@ -58,7 +59,7 @@ fn generate_jail(
 
     // Spawn tiles
     for (x, y, tile) in map.iter_tiles() {
-        let e = spawn_tile_entity(&mut commands, &mut meshes, &mut materials, x, y, tile);
+        let e = spawn_tile(&mut commands, &mut meshes, &mut materials, x, y, tile);
         commands.entity(e).insert(LevelEntity);
     }
 
@@ -129,7 +130,7 @@ fn handle_transition(
 
         // Spawn tiles
         for (x, y, tile) in map.iter_tiles() {
-            let e = spawn_tile_entity(&mut commands, &mut meshes, &mut materials, x, y, tile);
+            let e = spawn_tile(&mut commands, &mut meshes, &mut materials, x, y, tile);
             commands.entity(e).insert(LevelEntity);
         }
 
@@ -229,65 +230,3 @@ fn handle_transition(
     }
 }
 
-fn spawn_tile_entity(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    x: i32,
-    y: i32,
-    tile: crate::world::tile::TileType,
-) -> Entity {
-    use crate::world::tile::TileType;
-    use crate::world::tile::tile_to_world;
-    let pos = tile_to_world(x, y);
-    match tile {
-        TileType::Floor => commands
-            .spawn((
-                Mesh3d(meshes.add(Cuboid::new(1.0, 0.1, 1.0))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.45, 0.45, 0.45),
-                    perceptual_roughness: 0.9,
-                    metallic: 0.0,
-                    ..default()
-                })),
-                Transform::from_translation(pos + Vec3::new(0.0, -0.05, 0.0)),
-            ))
-            .id(),
-        TileType::Wall => commands
-            .spawn((
-                Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.2, 0.2, 0.2),
-                    perceptual_roughness: 0.7,
-                    metallic: 0.1,
-                    ..default()
-                })),
-                Transform::from_translation(pos + Vec3::new(0.0, 0.5, 0.0)),
-            ))
-            .id(),
-        TileType::Door => commands
-            .spawn((
-                Mesh3d(meshes.add(Cuboid::new(1.0, 0.5, 1.0))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.55, 0.35, 0.1),
-                    perceptual_roughness: 0.8,
-                    metallic: 0.0,
-                    ..default()
-                })),
-                Transform::from_translation(pos + Vec3::new(0.0, 0.25, 0.0)),
-            ))
-            .id(),
-        TileType::Exit => commands
-            .spawn((
-                Mesh3d(meshes.add(Cuboid::new(1.0, 0.1, 1.0))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.1, 0.8, 0.3),
-                    perceptual_roughness: 0.9,
-                    metallic: 0.0,
-                    ..default()
-                })),
-                Transform::from_translation(pos + Vec3::new(0.0, -0.05, 0.0)),
-            ))
-            .id(),
-    }
-}
