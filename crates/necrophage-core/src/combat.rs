@@ -5,7 +5,7 @@ use crate::biomass::{BiomassOrb, BiomassTier, OrbValue};
 use crate::movement::GridPos;
 use crate::player::{ActiveEntity, Player};
 use crate::possession::Corpse;
-use crate::world::CurrentMap;
+use crate::world::{CurrentMap, GameRng};
 
 // ── Components ───────────────────────────────────────────────────────────────
 
@@ -151,8 +151,8 @@ fn enemy_patrol_system(
     mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI), With<Enemy>>,
     map: Res<CurrentMap>,
     time: Res<Time>,
+    mut rng: ResMut<GameRng>,
 ) {
-    let mut rng = rand::thread_rng();
     for (mut pos, mut timer, ai) in &mut enemies {
         if *ai != EnemyAI::Patrol {
             continue;
@@ -163,7 +163,7 @@ fn enemy_patrol_system(
         }
         timer.0 = 1.5;
         let dirs = [(0, -1), (0, 1), (-1, 0), (1, 0)];
-        let (dx, dy) = dirs[rng.gen_range(0..4)];
+        let (dx, dy) = dirs[rng.0.gen_range(0..4)];
         let nx = pos.x + dx;
         let ny = pos.y + dy;
         if map.0.is_walkable(nx, ny) {

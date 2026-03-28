@@ -13,7 +13,7 @@ use crate::movement::GridPos;
 use crate::npc::{Liberator, LiberatorState, ScriptTimer};
 use crate::player::{ActiveEntity, Player};
 use crate::quest::LevelTransitionEvent;
-use crate::world::CurrentMap;
+use crate::world::{CurrentMap, GameRng};
 use district::DistrictGenerator;
 use generator::LevelGenerator;
 use jail::JailGenerator;
@@ -38,9 +38,13 @@ impl Plugin for LevelPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(LevelSeed(12345))
             .init_state::<LevelState>()
-            .add_systems(Startup, generate_jail)
+            .add_systems(Startup, (seed_rng, generate_jail).chain())
             .add_systems(Update, handle_transition);
     }
+}
+
+fn seed_rng(seed: Res<LevelSeed>, mut rng: ResMut<GameRng>) {
+    rng.0 = StdRng::seed_from_u64(seed.0);
 }
 
 fn generate_jail(
