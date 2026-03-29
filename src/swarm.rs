@@ -4,11 +4,11 @@ use crate::biomass::{Biomass, BiomassTier};
 use crate::camera::CameraTarget;
 use crate::combat::{
     Attack, AttackMode, DamageEvent, Dying, Enemy, EntityDied, Health, HpBar, HpBarRoot,
-    spawn_projectile,
+    has_line_of_sight, spawn_projectile,
 };
 use crate::movement::{AttackRecovery, Body, GridPos, MoveDir};
 use crate::player::{ActiveEntity, Player};
-use crate::world::GameState;
+use crate::world::{CurrentMap, GameState};
 
 // ── Components ────────────────────────────────────────────────────────────────
 
@@ -276,10 +276,10 @@ fn strong_attack_system(
             .iter()
             .filter(|(_, tf)| dist_xz(active_tf.translation, tf.translation) <= RANGED_ATTACK_RANGE)
             .min_by_key(|(_, tf)| (dist_xz(active_tf.translation, tf.translation) * 1000.0) as i32);
-        if let Some((target_entity, _)) = nearest {
+        if let Some((target_entity, target_tf)) = nearest {
             spawn_projectile(
                 &mut commands, &mut meshes, &mut materials,
-                active_tf.translation, target_entity, base_damage,
+                active_tf.translation, target_entity, target_tf.translation, base_damage,
                 Color::srgb(0.1, 0.9, 1.0), LinearRgba::new(0.0, 2.0, 4.0, 1.0),
             );
             sa.timer = sa.cooldown;
@@ -336,19 +336,21 @@ fn swarm_follow_system(
     }
 }
 
-/// Override MoveDir for non-active swarm members when enemies are in sight.
+/// Override MoveDir for non-active swarm members when enemies are in line of sight.
 /// Melee members charge; ranged members maintain their preferred firing band.
 fn swarm_ai_system(
     swarm: Res<Swarm>,
     active: Res<ActiveEntity>,
     all_transforms: Query<&Transform>,
-    enemy_entities: Query<Entity, (With<Enemy>, Without<Dying>)>,
+    enemy_entities: Query<(Entity, &GridPos), (With<Enemy>, Without<Dying>)>,
+    member_grid_pos: Query<&GridPos, With<SwarmMember>>,
     mut member_dirs: Query<(&mut MoveDir, Option<&AttackMode>), With<SwarmMember>>,
+    map: Res<CurrentMap>,
 ) {
     // Collect current enemy positions once to avoid repeated borrow conflicts.
-    let enemy_positions: Vec<(Entity, Vec3)> = enemy_entities
+    let enemy_positions: Vec<(Entity, GridPos, Vec3)> = enemy_entities
         .iter()
-        .filter_map(|e| all_transforms.get(e).ok().map(|tf| (e, tf.translation)))
+        .filter_map(|(e, gp)| all_transforms.get(e).ok().map(|tf| (e, *gp, tf.translation)))
         .collect();
 
     for &entity in &swarm.members {
@@ -356,18 +358,22 @@ fn swarm_ai_system(
             continue;
         }
         let Ok(member_tf) = all_transforms.get(entity) else { continue };
+        let Ok(member_gp) = member_grid_pos.get(entity) else { continue };
         let Ok((mut move_dir, attack_mode)) = member_dirs.get_mut(entity) else { continue };
         let member_pos = member_tf.translation;
 
-        // Find nearest enemy within sight range.
+        // Find nearest enemy within sight range with LOS.
         let nearest = enemy_positions
             .iter()
-            .min_by_key(|(_, epos)| (dist_xz(member_pos, *epos) * 1000.0) as i32);
-        let Some(&(_, enemy_pos)) = nearest else { continue };
+            .filter(|(_, _, epos)| {
+                let d = dist_xz(member_pos, *epos);
+                d <= SWARM_SIGHT_RANGE
+            })
+            .filter(|(_, egp, _)| has_line_of_sight(&map.0, *member_gp, *egp))
+            .min_by_key(|(_, _, epos)| (dist_xz(member_pos, *epos) * 1000.0) as i32);
+
+        let Some(&(_, _, enemy_pos)) = nearest else { continue };
         let dist = dist_xz(member_pos, enemy_pos);
-        if dist > SWARM_SIGHT_RANGE {
-            continue; // no enemy in range; follow system handles movement
-        }
 
         let is_ranged = attack_mode == Some(&AttackMode::Ranged);
         if is_ranged {
@@ -398,6 +404,7 @@ fn swarm_ai_system(
 }
 
 /// Automatically fire basic attacks for all non-active swarm members.
+/// Requires line of sight to the target.
 fn swarm_auto_attack_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -406,14 +413,15 @@ fn swarm_auto_attack_system(
     active: Res<ActiveEntity>,
     member_transforms: Query<&Transform, With<SwarmMember>>,
     mut member_attacks: Query<(&mut Attack, Option<&AttackMode>, &GridPos), With<SwarmMember>>,
-    enemies: Query<(Entity, &Transform), (With<Enemy>, Without<Dying>)>,
+    enemies: Query<(Entity, &Transform, &GridPos), (With<Enemy>, Without<Dying>)>,
     mut damage_events: EventWriter<DamageEvent>,
     tier: Res<BiomassTier>,
+    map: Res<CurrentMap>,
 ) {
     // Collect enemy positions once.
-    let enemy_list: Vec<(Entity, Vec3)> = enemies
+    let enemy_list: Vec<(Entity, Vec3, GridPos)> = enemies
         .iter()
-        .map(|(e, tf)| (e, tf.translation))
+        .map(|(e, tf, gp)| (e, tf.translation, *gp))
         .collect();
 
     for &entity in &swarm.members {
@@ -427,10 +435,15 @@ fn swarm_auto_attack_system(
         }
         let member_pos = member_tf.translation;
 
+        // Find nearest enemy within range that has a clear line of sight.
         let nearest = enemy_list
             .iter()
-            .min_by_key(|(_, epos)| (dist_xz(member_pos, *epos) * 1000.0) as i32);
-        let Some(&(target_entity, target_pos)) = nearest else { continue };
+            .filter(|(_, epos, egp)| {
+                let d = dist_xz(member_pos, *epos);
+                d <= SWARM_SIGHT_RANGE && has_line_of_sight(&map.0, *grid, *egp)
+            })
+            .min_by_key(|(_, epos, _)| (dist_xz(member_pos, *epos) * 1000.0) as i32);
+        let Some(&(target_entity, target_pos, _)) = nearest else { continue };
         let dist = dist_xz(member_pos, target_pos);
         let base_damage = atk.damage * tier.damage_multiplier();
 
@@ -438,7 +451,7 @@ fn swarm_auto_attack_system(
             if dist <= RANGED_ATTACK_RANGE {
                 spawn_projectile(
                     &mut commands, &mut meshes, &mut materials,
-                    member_pos, target_entity, base_damage,
+                    member_pos, target_entity, target_pos, base_damage,
                     Color::srgb(0.2, 1.0, 0.4), LinearRgba::new(0.0, 3.0, 0.5, 1.0),
                 );
                 atk.timer = atk.cooldown;

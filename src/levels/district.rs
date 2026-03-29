@@ -119,9 +119,10 @@ impl LevelGenerator for DistrictGenerator {
         info.boss_position = Some((boss_bx + (boss_bx2 - boss_bx) / 2, boss_by + 4));
         info.entrance_positions = entrance_positions;
 
-        // Civilian and enemy spawns on streets
-        let enemy_count = rng.gen_range(5usize..12);
-        for _ in 0..enemy_count {
+        // Enemies — dense sampling to ensure ~30-50 walable placements.
+        // We sample more candidates than needed and keep all walkable hits.
+        let enemy_candidates = rng.gen_range(80usize..120);
+        for _ in 0..enemy_candidates {
             let x = rng.gen_range(1..w - 1);
             let y = rng.gen_range(1..h - 1);
             if map.is_walkable(x, y) {
@@ -129,8 +130,9 @@ impl LevelGenerator for DistrictGenerator {
             }
         }
 
-        let civilian_count = rng.gen_range(5usize..12);
-        for _ in 0..civilian_count {
+        // Civilians — similarly dense.
+        let civilian_candidates = rng.gen_range(40usize..70);
+        for _ in 0..civilian_candidates {
             let x = rng.gen_range(1..w - 1);
             let y = rng.gen_range(1..h - 1);
             if map.is_walkable(x, y) {

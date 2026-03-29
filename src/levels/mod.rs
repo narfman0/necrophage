@@ -34,6 +34,29 @@ impl Default for LevelSeed {
 
 // ── Zone suspension ───────────────────────────────────────────────────────────
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Search outward from `(x, y)` up to radius 5 for the nearest walkable tile.
+fn find_walkable_near(map: &crate::world::map::TileMap, x: i32, y: i32) -> Option<(i32, i32)> {
+    if map.is_walkable(x, y) {
+        return Some((x, y));
+    }
+    for r in 1..=5i32 {
+        for dx in -r..=r {
+            for dy in -r..=r {
+                if dx.abs() == r || dy.abs() == r {
+                    let nx = x + dx;
+                    let ny = y + dy;
+                    if map.is_walkable(nx, ny) {
+                        return Some((nx, ny));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Entities more than this many tiles (Chebyshev) from the player have AI suspended.
 const SUSPEND_DIST: i32 = 50;
 /// Entities within this distance wake back up (hysteresis to prevent thrashing).
@@ -105,46 +128,52 @@ fn generate_world(
 
     // Spawn guards (jail zone).
     for &(gx, gy) in &info.guard_positions {
+        let Some((wx, wy)) = find_walkable_near(&map, gx, gy) else { continue };
         let e = spawn_enemy(
             &mut commands, &mut meshes, &mut materials,
-            GridPos { x: gx, y: gy }, 25.0, 8.0, Color::srgb(0.7, 0.5, 0.1),
+            GridPos { x: wx, y: wy }, 25.0, 8.0, Color::srgb(0.7, 0.5, 0.1),
         );
         commands.entity(e).insert(LevelEntity);
     }
 
     // Spawn district enemies with 50/50 melee/ranged assignment.
     for &(ex, ey) in &info.enemy_positions {
+        let Some((wx, wy)) = find_walkable_near(&map, ex, ey) else { continue };
         let mode = if rng.gen_bool(0.5) { AttackMode::Ranged } else { AttackMode::Melee };
         let e = spawn_enemy(
             &mut commands, &mut meshes, &mut materials,
-            GridPos { x: ex, y: ey }, 20.0, 6.0, Color::srgb(0.8, 0.2, 0.2),
+            GridPos { x: wx, y: wy }, 20.0, 6.0, Color::srgb(0.8, 0.2, 0.2),
         );
         commands.entity(e).insert(mode).insert(LevelEntity);
     }
 
     // Spawn elite (lieutenant).
     for &(ex, ey) in &info.elite_positions {
+        let Some((wx, wy)) = find_walkable_near(&map, ex, ey) else { continue };
         let e = spawn_enemy(
             &mut commands, &mut meshes, &mut materials,
-            GridPos { x: ex, y: ey }, 80.0, 15.0, Color::srgb(0.9, 0.4, 0.0),
+            GridPos { x: wx, y: wy }, 80.0, 15.0, Color::srgb(0.9, 0.4, 0.0),
         );
         commands.entity(e).insert(Elite).insert(LevelEntity);
     }
 
     // Spawn boss (pre-placed in the world).
     if let Some((bx, by)) = info.boss_position {
-        let e = spawn_enemy(
-            &mut commands, &mut meshes, &mut materials,
-            GridPos { x: bx, y: by }, 300.0, 20.0, Color::srgb(0.6, 0.0, 0.8),
-        );
-        commands.entity(e).insert(MobBoss).insert(BossAI::default()).insert(LevelEntity);
+        if let Some((wx, wy)) = find_walkable_near(&map, bx, by) {
+            let e = spawn_enemy(
+                &mut commands, &mut meshes, &mut materials,
+                GridPos { x: wx, y: wy }, 300.0, 20.0, Color::srgb(0.6, 0.0, 0.8),
+            );
+            commands.entity(e).insert(MobBoss).insert(BossAI::default()).insert(LevelEntity);
+        }
     }
 
     // Spawn civilians.
     for &(cx, cy) in &info.civilian_positions {
+        let Some((wx, wy)) = find_walkable_near(&map, cx, cy) else { continue };
         commands.spawn((
             Civilian,
-            GridPos { x: cx, y: cy },
+            GridPos { x: wx, y: wy },
             Health::new(10.0),
             PatrolTimer(0.0),
             Mesh3d(meshes.add(Capsule3d::new(0.25, 0.5))),
@@ -152,7 +181,7 @@ fn generate_world(
                 base_color: Color::srgb(0.8, 0.8, 0.6),
                 ..default()
             })),
-            Transform::from_xyz(cx as f32, 0.5, cy as f32),
+            Transform::from_xyz(wx as f32, 0.5, wy as f32),
             LevelEntity,
         ));
     }

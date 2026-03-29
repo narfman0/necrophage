@@ -62,10 +62,18 @@ impl LevelGenerator for JailGenerator {
         let mut info = SpawnInfo::new((4, 4));
         info.liberator_start = Some((4, 14));
 
-        // 1–3 guards
-        let guard_count = rng.gen_range(1usize..=3);
+        // Guard room: 3–5 guards near the exit
+        let guard_count = rng.gen_range(3usize..=5);
         for i in 0..guard_count {
-            info.guard_positions.push((w - 10 + i as i32 % 2, h - 8 + i as i32 / 2));
+            info.guard_positions.push((w - 10 + i as i32 % 3, h - 8 + i as i32 / 3));
+        }
+
+        // Corridor patrol guards: 2–4 guards wandering the escape route
+        let patrol_count = rng.gen_range(2usize..=4);
+        for i in 0..patrol_count {
+            // Spread along the main corridor (x ≈ 7, y: 22..36)
+            let gy = 22 + (i as i32 * 4).min(14);
+            info.guard_positions.push((7, gy));
         }
 
         (map, info)

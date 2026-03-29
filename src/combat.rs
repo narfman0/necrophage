@@ -59,13 +59,16 @@ pub enum AttackMode {
     Ranged,
 }
 
-/// Moving projectile spawned by a ranged enemy.
+/// Moving projectile spawned by a ranged attacker.
+/// Travels in a straight line in `direction`; does not home in on the target.
 #[derive(Component)]
 pub struct Projectile {
     pub target: Entity,
     pub damage: f32,
-    /// Seconds remaining before auto-despawn (in case target died).
+    /// Seconds remaining before auto-despawn.
     pub lifetime: f32,
+    /// Fixed world-space direction vector (normalised). Set once at spawn.
+    pub direction: Vec3,
 }
 
 /// Per-enemy sight range in tiles (Chebyshev). Defaults to 8 if not present.
@@ -226,7 +229,7 @@ fn tick_attack_cooldowns(mut query: Query<&mut Attack>, time: Res<Time>) {
 }
 
 fn enemy_sight_system(
-    mut enemies: Query<(&GridPos, &mut EnemyAI, &SightRange, &mut LostTimer), (With<Enemy>, Without<Dying>, Without<Suspended>)>,
+    mut enemies: Query<(&GridPos, &mut EnemyAI, &SightRange, &mut LostTimer), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos>,
     map: Res<CurrentMap>,
@@ -253,7 +256,7 @@ const ALERT_RADIUS: i32 = 6;
 /// Triggered when an enemy first spots the player or when damage is dealt.
 fn enemy_alert_system(
     mut events: EventReader<AlertEvent>,
-    mut enemies: Query<(&GridPos, &mut EnemyAI, &mut LostTimer), (With<Enemy>, Without<Dying>, Without<Suspended>)>,
+    mut enemies: Query<(&GridPos, &mut EnemyAI, &mut LostTimer), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
 ) {
     for alert in events.read() {
         for (pos, mut ai, mut lost) in &mut enemies {
@@ -272,7 +275,7 @@ fn enemy_alert_system(
 /// When the timer expires the enemy gives up and resumes patrol.
 fn enemy_lost_system(
     time: Res<Time>,
-    mut enemies: Query<(&mut EnemyAI, &mut LostTimer), (With<Enemy>, Without<Dying>, Without<Suspended>)>,
+    mut enemies: Query<(&mut EnemyAI, &mut LostTimer), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
 ) {
     for (mut ai, mut timer) in &mut enemies {
         if *ai != EnemyAI::Chase {
@@ -287,7 +290,7 @@ fn enemy_lost_system(
 }
 
 fn enemy_patrol_system(
-    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform), (With<Enemy>, Without<Dying>, Without<Suspended>)>,
+    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
     map: Res<CurrentMap>,
     time: Res<Time>,
     mut rng: ResMut<GameRng>,
@@ -320,7 +323,7 @@ fn enemy_patrol_system(
 }
 
 fn enemy_chase_system(
-    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&AttackMode>), (With<Enemy>, Without<Dying>, Without<Suspended>)>,
+    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&AttackMode>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
     active: Res<ActiveEntity>,
     player_pos: Query<(&GridPos, &Transform), Without<Enemy>>,
     map: Res<CurrentMap>,
@@ -363,7 +366,7 @@ fn enemy_attack_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut enemies: Query<(Entity, &Transform, &GridPos, &mut Attack, &EnemyAI, Option<&AttackMode>), (With<Enemy>, Without<Dying>, Without<Suspended>)>,
+    mut enemies: Query<(Entity, &Transform, &GridPos, &mut Attack, &EnemyAI, Option<&AttackMode>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
     active: Res<ActiveEntity>,
     player_tf: Query<&Transform>,
     mut damage_events: EventWriter<DamageEvent>,
@@ -393,7 +396,7 @@ fn enemy_attack_system(
                 if dist <= RANGED_ATTACK_RANGE {
                     spawn_projectile(
                         &mut commands, &mut meshes, &mut materials,
-                        enemy_tf.translation, active.0, atk.damage,
+                        enemy_tf.translation, active.0, target_tf.translation, atk.damage,
                         Color::srgb(1.0, 0.6, 0.0), LinearRgba::new(2.0, 1.0, 0.0, 1.0),
                     );
                     atk.timer = atk.cooldown;
@@ -404,7 +407,8 @@ fn enemy_attack_system(
     }
 }
 
-/// Spawn a projectile from `from_pos` toward `target`.
+/// Spawn a projectile from `from_pos` toward `target_pos`.
+/// The projectile travels in a fixed straight line and never homes in.
 /// Used by enemies, the active player, and swarm members.
 pub fn spawn_projectile(
     commands: &mut Commands,
@@ -412,19 +416,23 @@ pub fn spawn_projectile(
     materials: &mut Assets<StandardMaterial>,
     from_pos: Vec3,
     target: Entity,
+    target_pos: Vec3,
     damage: f32,
     color: Color,
     emissive: LinearRgba,
 ) {
+    let origin = from_pos + Vec3::new(0.0, 0.5, 0.0);
+    let aim = target_pos + Vec3::new(0.0, 0.5, 0.0);
+    let direction = (aim - origin).normalize_or_zero();
     commands.spawn((
-        Projectile { target, damage, lifetime: 3.0 },
+        Projectile { target, damage, lifetime: 3.0, direction },
         Mesh3d(meshes.add(Sphere::new(0.1))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive,
             ..default()
         })),
-        Transform::from_translation(from_pos + Vec3::new(0.0, 0.5, 0.0)),
+        Transform::from_translation(origin),
         LevelEntity,
     ));
 }
@@ -442,13 +450,15 @@ fn projectile_system(
             commands.entity(entity).despawn_recursive();
             continue;
         }
+        // Travel in the fixed direction set at spawn — never turns.
+        tf.translation += proj.direction * PROJECTILE_SPEED * time.delta_secs();
+
+        // Hit detection: check proximity to the target's current position.
         let Ok(target_tf) = targets.get(proj.target) else {
             commands.entity(entity).despawn_recursive();
             continue;
         };
         let target_pos = target_tf.translation + Vec3::new(0.0, 0.5, 0.0);
-        let dir = (target_pos - tf.translation).normalize_or_zero();
-        tf.translation += dir * PROJECTILE_SPEED * time.delta_secs();
         if tf.translation.distance(target_pos) <= PROJECTILE_HIT_DIST {
             damage_events.send(DamageEvent {
                 target: proj.target,
@@ -490,10 +500,10 @@ fn player_attack_system(
             .iter()
             .filter(|(_, tf)| dist_xz(player_tf.translation, tf.translation) <= RANGED_ATTACK_RANGE)
             .min_by_key(|(_, tf)| (dist_xz(player_tf.translation, tf.translation) * 1000.0) as i32);
-        if let Some((target_entity, _)) = nearest {
+        if let Some((target_entity, target_tf)) = nearest {
             spawn_projectile(
                 &mut commands, &mut meshes, &mut materials,
-                player_tf.translation, target_entity, base_damage,
+                player_tf.translation, target_entity, target_tf.translation, base_damage,
                 Color::srgb(0.2, 1.0, 0.4), LinearRgba::new(0.0, 3.0, 0.5, 1.0),
             );
             atk.timer = atk.cooldown;
@@ -791,7 +801,7 @@ fn player_death_system(
 /// Returns `true` if there is an unobstructed sightline between `from` and `to`
 /// on the tile grid. Intermediate tiles are sampled via float interpolation;
 /// any `Wall` tile along the path blocks the line.
-fn has_line_of_sight(map: &TileMap, from: GridPos, to: GridPos) -> bool {
+pub fn has_line_of_sight(map: &TileMap, from: GridPos, to: GridPos) -> bool {
     let dx = to.x - from.x;
     let dy = to.y - from.y;
     let steps = dx.abs().max(dy.abs());
