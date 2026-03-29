@@ -5,6 +5,7 @@ use crate::combat::DamageEvent;
 use crate::player::ActiveEntity;
 
 const ISO_OFFSET: Vec3 = Vec3::new(10.0, 10.0, 10.0);
+const CAMERA_LERP_SPEED: f32 = 8.0;
 
 #[derive(Resource, Default)]
 pub struct CameraTarget(pub Option<Entity>);
@@ -94,12 +95,15 @@ fn follow_target(
     entity_transforms: Query<&Transform, Without<Camera3d>>,
     mut camera_query: Query<&mut Transform, With<Camera3d>>,
     mut base: ResMut<CameraBaseLookAt>,
+    time: Res<Time>,
 ) {
     let Some(target_entity) = target.0 else { return };
     let Ok(target_transform) = entity_transforms.get(target_entity) else { return };
     let Ok(mut cam) = camera_query.get_single_mut() else { return };
 
-    let look_at = target_transform.translation;
+    let target_pos = target_transform.translation;
+    let t = (CAMERA_LERP_SPEED * time.delta_secs()).min(1.0);
+    let look_at = base.0.lerp(target_pos, t);
     base.0 = look_at;
     *cam = Transform::from_translation(look_at + ISO_OFFSET).looking_at(look_at, Vec3::Y);
 }
