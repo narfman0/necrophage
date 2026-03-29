@@ -6,7 +6,7 @@ use crate::dialogue::DialogueQueue;
 use crate::movement::{Body, GridPos, WALK_ARRIVAL_DIST};
 use crate::player::{ActiveEntity, Player};
 use crate::possession::Corpse;
-use crate::world::{CurrentMap, GameRng, GameState, LevelEntity};
+use crate::world::{map::TileMap, tile::TileType, CurrentMap, GameRng, GameState, LevelEntity};
 
 // ── Components ───────────────────────────────────────────────────────────────
 
@@ -125,6 +125,13 @@ pub struct EntityDied {
     pub pos: GridPos,
 }
 
+/// Fired when an enemy spots the player or combat begins at a position.
+/// Nearby patrolling enemies respond by entering Chase state.
+#[derive(Event)]
+pub struct AlertEvent {
+    pub origin: GridPos,
+}
+
 // ── Plugin ───────────────────────────────────────────────────────────────────
 
 pub struct CombatPlugin;
@@ -133,6 +140,7 @@ impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<DamageEvent>()
             .add_event::<EntityDied>()
+            .add_event::<AlertEvent>()
             .register_type::<Health>()
             .register_type::<Attack>()
             .register_type::<EnemyAI>()
@@ -141,7 +149,8 @@ impl Plugin for CombatPlugin {
                 (
                     tick_attack_cooldowns,
                     enemy_sight_system,
-                    enemy_lost_system.after(enemy_sight_system),
+                    enemy_alert_system.after(enemy_sight_system),
+                    enemy_lost_system.after(enemy_alert_system),
                     enemy_patrol_system,
                     enemy_chase_system,
                     enemy_attack_system,
@@ -172,13 +181,41 @@ fn enemy_sight_system(
     mut enemies: Query<(&GridPos, &mut EnemyAI, &SightRange, &mut LostTimer), With<Enemy>>,
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos>,
+    map: Res<CurrentMap>,
+    mut alert_events: EventWriter<AlertEvent>,
 ) {
     let Ok(target_pos) = player_pos.get(active.0) else { return };
     for (pos, mut ai, sight, mut lost) in &mut enemies {
         let dist = (pos.x - target_pos.x).abs().max((pos.y - target_pos.y).abs());
-        if dist <= sight.0 as i32 {
+        if dist <= sight.0 as i32 && has_line_of_sight(&map.0, *pos, *target_pos) {
+            if *ai != EnemyAI::Chase {
+                // First sighting — alert nearby patrolling enemies.
+                alert_events.send(AlertEvent { origin: *pos });
+            }
             *ai = EnemyAI::Chase;
             lost.0 = LOST_TIMEOUT; // still visible — reset lost countdown
+        }
+    }
+}
+
+/// Radius in tiles (Chebyshev) within which a combat alert wakes up patrolling enemies.
+const ALERT_RADIUS: i32 = 6;
+
+/// Propagates combat alerts to nearby patrolling enemies.
+/// Triggered when an enemy first spots the player or when damage is dealt.
+fn enemy_alert_system(
+    mut events: EventReader<AlertEvent>,
+    mut enemies: Query<(&GridPos, &mut EnemyAI, &mut LostTimer), With<Enemy>>,
+) {
+    for alert in events.read() {
+        for (pos, mut ai, mut lost) in &mut enemies {
+            if *ai == EnemyAI::Patrol {
+                let dist = (pos.x - alert.origin.x).abs().max((pos.y - alert.origin.y).abs());
+                if dist <= ALERT_RADIUS {
+                    *ai = EnemyAI::Chase;
+                    lost.0 = LOST_TIMEOUT;
+                }
+            }
         }
     }
 }
@@ -334,6 +371,7 @@ fn apply_damage(
     mut events: EventReader<DamageEvent>,
     mut health_query: Query<&mut Health>,
     positions: Query<&GridPos>,
+    mut alert_events: EventWriter<AlertEvent>,
 ) {
     for ev in events.read() {
         if let Ok(mut hp) = health_query.get_mut(ev.target) {
@@ -348,6 +386,8 @@ fn apply_damage(
                     commands.entity(ev.target).insert(Knockback { dx, dy });
                 }
             }
+            // Emit alert at the combat location so nearby enemies react.
+            alert_events.send(AlertEvent { origin: src });
         }
     }
 }
@@ -534,6 +574,28 @@ fn update_hp_bars(
     }
 }
 
+// ── Line-of-sight ─────────────────────────────────────────────────────────────
+
+/// Returns `true` if there is an unobstructed sightline between `from` and `to`
+/// on the tile grid. Intermediate tiles are sampled via float interpolation;
+/// any `Wall` tile along the path blocks the line.
+fn has_line_of_sight(map: &TileMap, from: GridPos, to: GridPos) -> bool {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    let steps = dx.abs().max(dy.abs());
+    if steps == 0 {
+        return true;
+    }
+    for i in 1..steps {
+        let nx = (from.x as f32 + dx as f32 * i as f32 / steps as f32).round() as i32;
+        let ny = (from.y as f32 + dy as f32 * i as f32 / steps as f32).round() as i32;
+        if map.tile_at(nx, ny) == TileType::Wall {
+            return false;
+        }
+    }
+    true
+}
+
 // ── Helper to spawn an enemy with an HP bar ───────────────────────────────────
 
 pub fn spawn_enemy(
@@ -630,5 +692,42 @@ mod tests {
     fn lost_timer_initialized() {
         let lt = LostTimer(LOST_TIMEOUT);
         assert!(lt.0 > 0.0);
+    }
+
+    #[test]
+    fn los_clear_on_open_floor() {
+        let map = TileMap::new(10, 10, TileType::Floor);
+        let from = GridPos { x: 0, y: 0 };
+        let to = GridPos { x: 9, y: 0 };
+        assert!(has_line_of_sight(&map, from, to));
+    }
+
+    #[test]
+    fn los_blocked_by_wall() {
+        let mut map = TileMap::new(10, 10, TileType::Floor);
+        map.set(5, 0, TileType::Wall);
+        let from = GridPos { x: 0, y: 0 };
+        let to = GridPos { x: 9, y: 0 };
+        assert!(!has_line_of_sight(&map, from, to));
+    }
+
+    #[test]
+    fn los_diagonal_clear() {
+        let map = TileMap::new(10, 10, TileType::Floor);
+        let from = GridPos { x: 0, y: 0 };
+        let to = GridPos { x: 5, y: 5 };
+        assert!(has_line_of_sight(&map, from, to));
+    }
+
+    #[test]
+    fn los_same_tile_returns_true() {
+        let map = TileMap::new(10, 10, TileType::Floor);
+        let pos = GridPos { x: 3, y: 3 };
+        assert!(has_line_of_sight(&map, pos, pos));
+    }
+
+    #[test]
+    fn alert_radius_positive() {
+        assert!(ALERT_RADIUS > 0);
     }
 }
