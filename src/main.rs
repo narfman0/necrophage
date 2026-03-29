@@ -14,6 +14,10 @@ pub mod swarm;
 pub mod world;
 
 use bevy::prelude::*;
+use bevy::render::{
+    settings::{Backends, RenderCreation, WgpuSettings},
+    RenderPlugin,
+};
 use biomass::{BiomassDisplay, BiomassPlugin};
 use minimap::MinimapPlugin;
 use camera::CameraPlugin;
@@ -56,13 +60,23 @@ impl Plugin for NecrophagePlugin {
 
 fn main() {
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Necrophage".into(),
-            ..default()
-        }),
-        ..default()
-    }))
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Necrophage".into(),
+                    ..default()
+                }),
+                ..default()
+            })
+            .set(RenderPlugin {
+                render_creation: RenderCreation::Automatic(WgpuSettings {
+                    backends: Some(Backends::DX12),
+                    ..default()
+                }),
+                ..default()
+            }),
+    )
     .add_plugins(NecrophagePlugin)
     .add_systems(
         Startup,

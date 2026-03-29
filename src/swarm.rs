@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use crate::biomass::{Biomass, BiomassTier};
 use crate::camera::CameraTarget;
 use crate::combat::{
-    Attack, AttackMode, DamageEvent, Dying, Enemy, EntityDied, Health, HpBar, HpBarRoot,
-    has_line_of_sight, spawn_projectile,
+    Attack, AttackMode, Corpse, DamageEvent, Dying, Enemy, EntityDied, EntityPath, Health,
+    HpBar, HpBarRoot, has_line_of_sight, spawn_projectile,
 };
 use crate::movement::{AttackRecovery, Body, GridPos, MoveDir};
 use crate::player::{ActiveEntity, Player};
@@ -309,43 +309,66 @@ fn strong_attack_system(
 fn swarm_follow_system(
     swarm: Res<Swarm>,
     active: Res<ActiveEntity>,
-    all_transforms: Query<&Transform>,
-    mut member_dirs: Query<&mut MoveDir, With<SwarmMember>>,
+    transforms: Query<&Transform>,
+    grid_pos_query: Query<&GridPos>,
+    mut member_queries: Query<(&mut MoveDir, Option<&mut EntityPath>)>,
+    map: Res<CurrentMap>,
+    time: Res<Time>,
 ) {
-    let leader_pos = match all_transforms.get(active.0) {
-        Ok(tf) => tf.translation,
-        Err(_) => return,
-    };
+    let Ok(leader_tf) = transforms.get(active.0) else { return };
+    let Ok(leader_gp) = grid_pos_query.get(active.0) else { return };
+    let leader_pos = leader_tf.translation;
+    let dt = time.delta_secs();
 
     for &entity in &swarm.members {
-        if entity == active.0 {
-            continue;
-        }
-        let Ok(member_tf) = all_transforms.get(entity) else { continue };
-        let Ok(mut move_dir) = member_dirs.get_mut(entity) else { continue };
+        if entity == active.0 { continue; }
+        let Ok(member_tf) = transforms.get(entity) else { continue };
+        let Ok(member_gp) = grid_pos_query.get(entity) else { continue };
+        let Ok((mut move_dir, path_opt)) = member_queries.get_mut(entity) else { continue };
 
         let diff = Vec2::new(
             leader_pos.x - member_tf.translation.x,
             leader_pos.z - member_tf.translation.z,
         );
-        if diff.length() > SWARM_FOLLOW_DIST {
-            move_dir.0 = diff.normalize();
-        } else {
+        if diff.length() <= SWARM_FOLLOW_DIST {
             move_dir.0 = Vec2::ZERO;
+            if let Some(mut path) = path_opt { path.steps.clear(); }
+            continue;
+        }
+
+        if let Some(mut path) = path_opt {
+            path.recalc_timer -= dt;
+            if path.steps.is_empty() || path.recalc_timer <= 0.0 {
+                path.steps = map.0.astar((member_gp.x, member_gp.y), (leader_gp.x, leader_gp.y)).into();
+                path.recalc_timer = 0.4;
+            }
+            while path.steps.front() == Some(&(member_gp.x, member_gp.y)) {
+                path.steps.pop_front();
+            }
+            if let Some(&(nx, ny)) = path.steps.front() {
+                move_dir.0 = Vec2::new(
+                    nx as f32 - member_gp.x as f32,
+                    ny as f32 - member_gp.y as f32,
+                ).normalize_or_zero();
+            } else {
+                move_dir.0 = diff.normalize_or_zero();
+            }
+        } else {
+            move_dir.0 = diff.normalize_or_zero();
         }
     }
 }
 
 /// Override MoveDir for non-active swarm members when enemies are in line of sight.
-/// Melee members charge; ranged members maintain their preferred firing band.
+/// Melee members use A* to navigate; ranged members maintain their preferred firing band.
 fn swarm_ai_system(
     swarm: Res<Swarm>,
     active: Res<ActiveEntity>,
     all_transforms: Query<&Transform>,
-    enemy_entities: Query<(Entity, &GridPos), (With<Enemy>, Without<Dying>)>,
-    member_grid_pos: Query<&GridPos, With<SwarmMember>>,
-    mut member_dirs: Query<(&mut MoveDir, Option<&AttackMode>), With<SwarmMember>>,
+    enemy_entities: Query<(Entity, &GridPos), (With<Enemy>, Without<Dying>, Without<Corpse>)>,
+    mut member_dirs: Query<(&mut MoveDir, Option<&AttackMode>, &GridPos, &mut EntityPath), With<SwarmMember>>,
     map: Res<CurrentMap>,
+    time: Res<Time>,
 ) {
     // Collect current enemy positions once to avoid repeated borrow conflicts.
     let enemy_positions: Vec<(Entity, GridPos, Vec3)> = enemy_entities
@@ -353,26 +376,23 @@ fn swarm_ai_system(
         .filter_map(|(e, gp)| all_transforms.get(e).ok().map(|tf| (e, *gp, tf.translation)))
         .collect();
 
+    let dt = time.delta_secs();
     for &entity in &swarm.members {
         if entity == active.0 {
             continue;
         }
         let Ok(member_tf) = all_transforms.get(entity) else { continue };
-        let Ok(member_gp) = member_grid_pos.get(entity) else { continue };
-        let Ok((mut move_dir, attack_mode)) = member_dirs.get_mut(entity) else { continue };
+        let Ok((mut move_dir, attack_mode, member_gp, mut path)) = member_dirs.get_mut(entity) else { continue };
         let member_pos = member_tf.translation;
 
         // Find nearest enemy within sight range with LOS.
         let nearest = enemy_positions
             .iter()
-            .filter(|(_, _, epos)| {
-                let d = dist_xz(member_pos, *epos);
-                d <= SWARM_SIGHT_RANGE
-            })
+            .filter(|(_, _, epos)| dist_xz(member_pos, *epos) <= SWARM_SIGHT_RANGE)
             .filter(|(_, egp, _)| has_line_of_sight(&map.0, *member_gp, *egp))
             .min_by_key(|(_, _, epos)| (dist_xz(member_pos, *epos) * 1000.0) as i32);
 
-        let Some(&(_, _, enemy_pos)) = nearest else { continue };
+        let Some(&(_, enemy_gp, enemy_pos)) = nearest else { continue };
         let dist = dist_xz(member_pos, enemy_pos);
 
         let is_ranged = attack_mode == Some(&AttackMode::Ranged);
@@ -394,11 +414,26 @@ fn swarm_ai_system(
                 move_dir.0 = Vec2::ZERO;
             }
         } else {
-            // Melee — charge.
-            move_dir.0 = Vec2::new(
-                enemy_pos.x - member_pos.x,
-                enemy_pos.z - member_pos.z,
-            ).normalize_or_zero();
+            // Melee — A* navigate toward enemy.
+            path.recalc_timer -= dt;
+            if path.steps.is_empty() || path.recalc_timer <= 0.0 {
+                path.steps = map.0.astar((member_gp.x, member_gp.y), (enemy_gp.x, enemy_gp.y)).into();
+                path.recalc_timer = 0.4;
+            }
+            while path.steps.front() == Some(&(member_gp.x, member_gp.y)) {
+                path.steps.pop_front();
+            }
+            if let Some(&(nx, ny)) = path.steps.front() {
+                move_dir.0 = Vec2::new(
+                    nx as f32 - member_gp.x as f32,
+                    ny as f32 - member_gp.y as f32,
+                ).normalize_or_zero();
+            } else {
+                move_dir.0 = Vec2::new(
+                    enemy_pos.x - member_pos.x,
+                    enemy_pos.z - member_pos.z,
+                ).normalize_or_zero();
+            }
         }
     }
 }
@@ -413,7 +448,7 @@ fn swarm_auto_attack_system(
     active: Res<ActiveEntity>,
     member_transforms: Query<&Transform, With<SwarmMember>>,
     mut member_attacks: Query<(&mut Attack, Option<&AttackMode>, &GridPos), With<SwarmMember>>,
-    enemies: Query<(Entity, &Transform, &GridPos), (With<Enemy>, Without<Dying>)>,
+    enemies: Query<(Entity, &Transform, &GridPos), (With<Enemy>, Without<Dying>, Without<Corpse>)>,
     mut damage_events: EventWriter<DamageEvent>,
     tier: Res<BiomassTier>,
     map: Res<CurrentMap>,
@@ -629,6 +664,7 @@ fn spawn_swarm_creature(
     let bar_entity = commands
         .spawn((
             HpBarRoot,
+            Visibility::Hidden,
             Mesh3d(meshes.add(Cuboid::new(0.8, 0.08, 0.08))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::srgb(0.1, 0.9, 0.3),
@@ -650,6 +686,7 @@ fn spawn_swarm_creature(
             StrongAttack { damage: strong_dmg, cooldown: strong_cd, timer: 0.0 },
             mode,
             HpBar(bar_entity),
+            EntityPath::default(),
             Mesh3d(meshes.add(Capsule3d::new(radius, radius * 1.5))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: color,

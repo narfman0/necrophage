@@ -1,8 +1,10 @@
+use std::collections::VecDeque;
+
 use bevy::prelude::*;
 use rand::Rng;
 
 use crate::biomass::BiomassTier;
-use crate::movement::{AttackRecovery, Body, GridPos, WALK_ARRIVAL_DIST};
+use crate::movement::{AttackRecovery, Body, GridPos, MoveDir, WALK_ARRIVAL_DIST};
 use crate::player::{ActiveEntity, Player};
 use crate::world::{map::TileMap, tile::TileType, CurrentMap, GameRng, GameState, LevelEntity, PlayerDied, Suspended};
 
@@ -103,6 +105,21 @@ pub struct Corpse {
 #[derive(Component)]
 pub struct Dying {
     pub timer: f32,
+}
+
+/// Cached A* path for an entity. Steps are consumed one by one as the entity moves.
+#[derive(Component, Default)]
+pub struct EntityPath {
+    pub steps: VecDeque<(i32, i32)>,
+    pub recalc_timer: f32,
+}
+
+/// UI label that floats upward and fades out after a hit.
+#[derive(Component)]
+pub struct FloatingNumber {
+    pub world_pos: Vec3,
+    pub timer: f32,
+    pub max_timer: f32,
 }
 
 const DISSOLVE_DURATION: f32 = 0.6;
@@ -214,6 +231,14 @@ impl Plugin for CombatPlugin {
                     consume_corpse_system,
                 )
                 .run_if(in_state(GameState::Playing)),
+            )
+            .add_systems(
+                Update,
+                (
+                    spawn_damage_numbers,
+                    update_floating_numbers,
+                )
+                .run_if(in_state(GameState::Playing)),
             );
     }
 }
@@ -323,13 +348,15 @@ fn enemy_patrol_system(
 }
 
 fn enemy_chase_system(
-    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&AttackMode>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
+    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&AttackMode>, Option<&mut EntityPath>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
     active: Res<ActiveEntity>,
     player_pos: Query<(&GridPos, &Transform), Without<Enemy>>,
     map: Res<CurrentMap>,
+    time: Res<Time>,
 ) {
     let Ok((target, target_tf)) = player_pos.get(active.0) else { return };
-    for (mut pos, _timer, ai, transform, atk_recovery, mode) in &mut enemies {
+    let dt = time.delta_secs();
+    for (mut pos, _timer, ai, transform, atk_recovery, mode, mut path_opt) in &mut enemies {
         if *ai != EnemyAI::Chase {
             continue;
         }
@@ -348,16 +375,44 @@ fn enemy_chase_system(
         if current_xz.distance(target_xz) > WALK_ARRIVAL_DIST {
             continue;
         }
-        let dx = (target.x - pos.x).signum();
-        let dy = (target.y - pos.y).signum();
-        // Prefer diagonal step when both axes are non-zero (smarter pathing).
-        if dx != 0 && dy != 0 && map.0.is_walkable(pos.x + dx, pos.y + dy) {
-            pos.x += dx;
-            pos.y += dy;
-        } else if dx != 0 && map.0.is_walkable(pos.x + dx, pos.y) {
-            pos.x += dx;
-        } else if dy != 0 && map.0.is_walkable(pos.x, pos.y + dy) {
-            pos.y += dy;
+        if let Some(ref mut path) = path_opt {
+            path.recalc_timer -= dt;
+            if path.steps.is_empty() || path.recalc_timer <= 0.0 {
+                path.steps = map.0.astar((pos.x, pos.y), (target.x, target.y)).into();
+                path.recalc_timer = 0.5;
+            }
+            if let Some(&(nx, ny)) = path.steps.front() {
+                if map.0.is_walkable(nx, ny) {
+                    path.steps.pop_front();
+                    pos.x = nx;
+                    pos.y = ny;
+                } else {
+                    path.steps.clear();
+                    path.recalc_timer = 0.0;
+                }
+            } else {
+                // Fallback to direct movement
+                let dx = (target.x - pos.x).signum();
+                let dy = (target.y - pos.y).signum();
+                if dx != 0 && dy != 0 && map.0.is_walkable(pos.x + dx, pos.y + dy) {
+                    pos.x += dx; pos.y += dy;
+                } else if dx != 0 && map.0.is_walkable(pos.x + dx, pos.y) {
+                    pos.x += dx;
+                } else if dy != 0 && map.0.is_walkable(pos.x, pos.y + dy) {
+                    pos.y += dy;
+                }
+            }
+        } else {
+            // No EntityPath component — direct movement fallback
+            let dx = (target.x - pos.x).signum();
+            let dy = (target.y - pos.y).signum();
+            if dx != 0 && dy != 0 && map.0.is_walkable(pos.x + dx, pos.y + dy) {
+                pos.x += dx; pos.y += dy;
+            } else if dx != 0 && map.0.is_walkable(pos.x + dx, pos.y) {
+                pos.x += dx;
+            } else if dy != 0 && map.0.is_walkable(pos.x, pos.y + dy) {
+                pos.y += dy;
+            }
         }
     }
 }
@@ -578,12 +633,17 @@ fn knockback_system(
 
 fn death_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &Health, &GridPos, Option<&Civilian>, Option<&HpBar>, &mut Transform), (Without<Player>, Without<Dying>, Without<Corpse>)>,
+    mut query: Query<(Entity, &Health, &GridPos, Option<&Civilian>, Option<&HpBar>, &mut Transform, Option<&mut MoveDir>), (Without<Player>, Without<Dying>, Without<Corpse>)>,
     mut death_events: EventWriter<EntityDied>,
 ) {
-    for (entity, hp, pos, is_civilian, hp_bar, mut transform) in &mut query {
+    for (entity, hp, pos, is_civilian, hp_bar, mut transform, move_dir) in &mut query {
         if hp.current <= 0.0 {
             death_events.send(EntityDied { entity, pos: *pos });
+
+            // Zero out movement so the corpse doesn't keep sliding.
+            if let Some(mut dir) = move_dir {
+                dir.0 = Vec2::ZERO;
+            }
 
             // Remove the HP bar immediately.
             if let Some(HpBar(bar_entity)) = hp_bar {
@@ -754,13 +814,13 @@ fn civilian_flee_system(
 
 fn update_hp_bars(
     enemies: Query<(&Health, &Transform, &HpBar), Without<Dying>>,
-    mut bar_transforms: Query<&mut Transform, (With<HpBarRoot>, Without<HpBar>)>,
+    mut bar_query: Query<(&mut Transform, &mut Visibility), (With<HpBarRoot>, Without<HpBar>)>,
 ) {
     for (hp, enemy_transform, HpBar(bar_entity)) in &enemies {
-        if let Ok(mut bar_transform) = bar_transforms.get_mut(*bar_entity) {
+        if let Ok((mut bar_transform, mut visibility)) = bar_query.get_mut(*bar_entity) {
             let ratio = (hp.current / hp.max).clamp(0.0, 1.0);
-            bar_transform.translation =
-                enemy_transform.translation + Vec3::new(0.0, 1.2, 0.0);
+            *visibility = if ratio < 1.0 { Visibility::Visible } else { Visibility::Hidden };
+            bar_transform.translation = enemy_transform.translation + Vec3::new(0.0, 1.2, 0.0);
             bar_transform.scale = Vec3::new(ratio, 1.0, 1.0);
         }
     }
@@ -833,6 +893,7 @@ pub fn spawn_enemy(
         .spawn((
             HpBarRoot,
             LevelEntity,
+            Visibility::Hidden,
             Mesh3d(meshes.add(Cuboid::new(0.8, 0.08, 0.08))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::srgb(1.0, 0.1, 0.1),
@@ -855,6 +916,7 @@ pub fn spawn_enemy(
             Health::new(hp),
             Attack::new(damage, 1.2),
             HpBar(bar_entity),
+            EntityPath::default(),
             Mesh3d(meshes.add(Capsule3d::new(0.3, 0.6))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: color,
@@ -863,6 +925,53 @@ pub fn spawn_enemy(
             Transform::from_xyz(pos.x as f32, 0.5, pos.y as f32),
         ))
         .id()
+}
+
+fn spawn_damage_numbers(
+    mut commands: Commands,
+    mut events: EventReader<DamageEvent>,
+    positions: Query<&Transform>,
+) {
+    for ev in events.read() {
+        let Ok(tf) = positions.get(ev.target) else { continue };
+        let world_pos = tf.translation + Vec3::new(0.0, 1.5, 0.0);
+        commands.spawn((
+            Text(format!("{:.0}", ev.amount)),
+            TextFont { font_size: 14.0, ..default() },
+            TextColor(Color::srgba(1.0, 0.85, 0.2, 1.0)),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                ..default()
+            },
+            FloatingNumber { world_pos, timer: 0.8, max_timer: 0.8 },
+        ));
+    }
+}
+
+fn update_floating_numbers(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut FloatingNumber, &mut Node, &mut TextColor)>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+    time: Res<Time>,
+) {
+    let Ok((camera, cam_gtf)) = camera_query.get_single() else { return };
+    let dt = time.delta_secs();
+    for (entity, mut float_num, mut node, mut color) in &mut query {
+        float_num.timer -= dt;
+        if float_num.timer <= 0.0 {
+            commands.entity(entity).despawn_recursive();
+            continue;
+        }
+        float_num.world_pos.y += dt * 1.5;
+        if let Ok(screen_pos) = camera.world_to_viewport(cam_gtf, float_num.world_pos) {
+            node.left = Val::Px(screen_pos.x - 12.0);
+            node.top = Val::Px(screen_pos.y - 8.0);
+        }
+        let alpha = (float_num.timer / float_num.max_timer).clamp(0.0, 1.0);
+        color.0 = Color::srgba(1.0, 0.85, 0.2, alpha);
+    }
 }
 
 #[cfg(test)]
