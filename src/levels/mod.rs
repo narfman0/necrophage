@@ -58,9 +58,9 @@ fn find_walkable_near(map: &crate::world::map::TileMap, x: i32, y: i32) -> Optio
 }
 
 /// Entities more than this many tiles (Chebyshev) from the player have AI suspended.
-const SUSPEND_DIST: i32 = 50;
+const SUSPEND_DIST: i32 = 22;
 /// Entities within this distance wake back up (hysteresis to prevent thrashing).
-const WAKE_DIST: i32 = 40;
+const WAKE_DIST: i32 = 18;
 
 // ── Plugin ────────────────────────────────────────────────────────────────────
 
