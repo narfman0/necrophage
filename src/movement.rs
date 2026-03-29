@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bevy::prelude::*;
 
 use crate::player::ActiveEntity;
@@ -232,7 +234,8 @@ fn lerp_transforms(
 }
 
 /// Push Body+MoveDir entities away from any overlapping Body entities.
-/// Uses a snapshot of all body positions to handle MoveDir-vs-MoveDir separation too.
+/// Uses a spatial hash bucketed at 1-unit cells so each entity only checks
+/// its 9-cell neighbourhood instead of the full entity list (O(n) vs O(n²)).
 fn separate_entities(
     mut params: ParamSet<(
         Query<(Entity, &Transform), With<Body>>,
@@ -242,27 +245,39 @@ fn separate_entities(
     let min_dist = ENTITY_RADIUS * 2.0;
     let min_dist_sq = min_dist * min_dist;
 
-    let positions: Vec<(Entity, Vec3)> = params
-        .p0()
-        .iter()
-        .map(|(e, tf)| (e, tf.translation))
-        .collect();
+    // Build spatial hash: cell (floor(x), floor(z)) → list of (entity, pos).
+    let mut grid: HashMap<(i32, i32), Vec<(Entity, Vec3)>> = HashMap::new();
+    for (e, tf) in params.p0().iter() {
+        let cell = (
+            tf.translation.x.floor() as i32,
+            tf.translation.z.floor() as i32,
+        );
+        grid.entry(cell).or_default().push((e, tf.translation));
+    }
 
     for (me, mut my_tf, mut my_gp) in &mut params.p1() {
-        for &(other, other_pos) in &positions {
-            if other == me {
-                continue;
-            }
-            let dx = my_tf.translation.x - other_pos.x;
-            let dz = my_tf.translation.z - other_pos.z;
-            let dist_sq = dx * dx + dz * dz;
-            if dist_sq > 0.0001 && dist_sq < min_dist_sq {
-                let dist = dist_sq.sqrt();
-                let push = (min_dist - dist) / dist;
-                my_tf.translation.x += dx * push;
-                my_tf.translation.z += dz * push;
-                my_gp.x = my_tf.translation.x.round() as i32;
-                my_gp.y = my_tf.translation.z.round() as i32;
+        let cx = my_tf.translation.x.floor() as i32;
+        let cz = my_tf.translation.z.floor() as i32;
+        // Only check the 9 adjacent cells — entities farther away can't overlap.
+        for dcx in -1i32..=1 {
+            for dcz in -1i32..=1 {
+                let Some(bucket) = grid.get(&(cx + dcx, cz + dcz)) else { continue };
+                for &(other, other_pos) in bucket {
+                    if other == me {
+                        continue;
+                    }
+                    let dx = my_tf.translation.x - other_pos.x;
+                    let dz = my_tf.translation.z - other_pos.z;
+                    let dist_sq = dx * dx + dz * dz;
+                    if dist_sq > 0.0001 && dist_sq < min_dist_sq {
+                        let dist = dist_sq.sqrt();
+                        let push = (min_dist - dist) / dist;
+                        my_tf.translation.x += dx * push;
+                        my_tf.translation.z += dz * push;
+                        my_gp.x = my_tf.translation.x.round() as i32;
+                        my_gp.y = my_tf.translation.z.round() as i32;
+                    }
+                }
             }
         }
     }
