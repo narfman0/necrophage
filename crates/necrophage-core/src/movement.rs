@@ -58,7 +58,9 @@ fn wasd_input(
 
     let dx = if d { 1.0 } else if a { -1.0 } else { 0.0 };
     let dy = if w { -1.0 } else if s { 1.0 } else { 0.0 };
-    dir.0 = Vec2::new(dx, dy);
+    // Rotate 45° to align WASD with isometric screen axes (camera at equal X/Y/Z).
+    // Screen-down  = world (+X,+Z), screen-right = world (+X,-Z), etc.
+    dir.0 = Vec2::new(dx + dy, -dx + dy);
 }
 
 fn apply_movement(
@@ -203,20 +205,23 @@ mod tests {
     #[test]
     fn movement_8_directional_all_deltas() {
         // All 8 direction combos produce non-zero intent.
+        // After 45° isometric rotation: Vec2::new(dx + dy, -dx + dy)
+        // W=screen-up=(-1,-1), S=screen-down=(1,1), A=screen-left=(-1,1), D=screen-right=(1,-1)
         let cases = [
-            (true, false, false, false, (0.0, -1.0)),   // W
-            (false, true, false, false, (0.0, 1.0)),    // S
-            (false, false, true, false, (-1.0, 0.0)),   // A
-            (false, false, false, true, (1.0, 0.0)),    // D
-            (true, false, false, true, (1.0, -1.0)),    // W+D
-            (true, false, true, false, (-1.0, -1.0)),   // W+A
-            (false, true, false, true, (1.0, 1.0)),     // S+D
-            (false, true, true, false, (-1.0, 1.0)),    // S+A
+            (true, false, false, false, (-1.0, -1.0)),  // W → screen up
+            (false, true, false, false, (1.0, 1.0)),    // S → screen down
+            (false, false, true, false, (-1.0, 1.0)),   // A → screen left
+            (false, false, false, true, (1.0, -1.0)),   // D → screen right
+            (true, false, false, true, (0.0, -2.0)),    // W+D
+            (true, false, true, false, (-2.0, 0.0)),    // W+A
+            (false, true, false, true, (2.0, 0.0)),     // S+D
+            (false, true, true, false, (0.0, 2.0)),     // S+A
         ];
         for (w, s, a, d, expected) in cases {
             let dx = if d { 1.0f32 } else if a { -1.0 } else { 0.0 };
             let dy = if w { -1.0f32 } else if s { 1.0 } else { 0.0 };
-            assert_eq!((dx, dy), expected, "w={w} s={s} a={a} d={d}");
+            let iso = (dx + dy, -dx + dy);
+            assert_eq!(iso, expected, "w={w} s={s} a={a} d={d}");
         }
     }
 
