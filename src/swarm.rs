@@ -161,6 +161,7 @@ impl Plugin for SwarmPlugin {
 
 /// How far (world units) a non-active swarm member can see enemies before engaging.
 const SWARM_SIGHT_RANGE: f32 = 10.0;
+const SWARM_SIGHT_RANGE_SQ: f32 = SWARM_SIGHT_RANGE * SWARM_SIGHT_RANGE;
 /// Distance (world units) at which followers stop moving toward the leader.
 const SWARM_FOLLOW_DIST: f32 = 2.5;
 /// Minimum distance ranged members keep from enemies.
@@ -386,11 +387,20 @@ fn swarm_ai_system(
         let member_pos = member_tf.translation;
 
         // Find nearest enemy within sight range with LOS.
+        // Use squared distance for the range filter to avoid sqrt per candidate.
         let nearest = enemy_positions
             .iter()
-            .filter(|(_, _, epos)| dist_xz(member_pos, *epos) <= SWARM_SIGHT_RANGE)
+            .filter(|(_, _, epos)| {
+                let dx = member_pos.x - epos.x;
+                let dz = member_pos.z - epos.z;
+                dx * dx + dz * dz <= SWARM_SIGHT_RANGE_SQ
+            })
             .filter(|(_, egp, _)| has_line_of_sight(&map.0, *member_gp, *egp))
-            .min_by_key(|(_, _, epos)| (dist_xz(member_pos, *epos) * 1000.0) as i32);
+            .min_by_key(|(_, _, epos)| {
+                let dx = member_pos.x - epos.x;
+                let dz = member_pos.z - epos.z;
+                ((dx * dx + dz * dz) * 1000.0) as i32
+            });
 
         let Some(&(_, enemy_gp, enemy_pos)) = nearest else { continue };
         let dist = dist_xz(member_pos, enemy_pos);
