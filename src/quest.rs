@@ -2,10 +2,11 @@ use bevy::prelude::*;
 
 use crate::combat::{Elite, EntityDied, MobBoss};
 use crate::dialogue::DialogueQueue;
+use crate::levels::world::JAIL_BOUNDARY_X;
 use crate::movement::GridPos;
 use crate::npc::Liberator;
 use crate::player::ActiveEntity;
-use crate::world::{CurrentMap, GameState, PendingLevelChange};
+use crate::world::GameState;
 
 #[derive(Resource, PartialEq, Eq, Clone, Copy, Debug, Default)]
 pub enum QuestState {
@@ -42,12 +43,9 @@ impl QuestState {
 #[derive(Resource, Default)]
 pub struct BossDefeated(pub bool);
 
-#[derive(Event)]
-pub struct LevelTransitionEvent;
-
-/// Guard flag to prevent LevelTransitionEvent from firing multiple frames.
+/// Guard flag: prevents `check_escape` from firing on every frame once triggered.
 #[derive(Resource, Default)]
-pub struct TransitionFired(pub bool);
+pub struct EscapeFired(pub bool);
 
 pub struct QuestPlugin;
 
@@ -55,8 +53,7 @@ impl Plugin for QuestPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<QuestState>()
             .init_resource::<BossDefeated>()
-            .init_resource::<TransitionFired>()
-            .add_event::<LevelTransitionEvent>()
+            .init_resource::<EscapeFired>()
             .add_systems(
                 Update,
                 (
@@ -71,14 +68,14 @@ impl Plugin for QuestPlugin {
     }
 }
 
+/// Advances the quest from Escape → HitJob when the player crosses out of the
+/// jail zone into the open world (single-map design, no level transition).
 fn check_escape(
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos>,
-    map: Res<CurrentMap>,
     mut state: ResMut<QuestState>,
     mut dialogue: ResMut<DialogueQueue>,
-    mut fired: ResMut<TransitionFired>,
-    mut pending: ResMut<PendingLevelChange>,
+    mut fired: ResMut<EscapeFired>,
 ) {
     if *state != QuestState::Escape {
         return;
@@ -87,15 +84,10 @@ fn check_escape(
         return;
     }
     let Ok(pos) = player_pos.get(active.0) else { return };
-    let Some((ex, ey)) = map.0.exit_pos else { return };
-    // Use proximity (dist <= 1) rather than exact equality so the exit is
-    // never missed if the player moves through it quickly.
-    let dist = (pos.x - ex).abs().max((pos.y - ey).abs());
-    if dist <= 1 && *pending == PendingLevelChange::None {
+    if pos.x > JAIL_BOUNDARY_X {
         fired.0 = true;
         *state = QuestState::HitJob;
         dialogue.push("System", "You've escaped the jail. Now find the lieutenant.");
-        *pending = PendingLevelChange::JailToDistrict;
     }
 }
 
@@ -202,11 +194,10 @@ mod tests {
     }
 
     #[test]
-    fn transition_fired_guard_prevents_double_fire() {
-        let mut fired = TransitionFired::default();
+    fn escape_fired_guard_prevents_double_fire() {
+        let mut fired = EscapeFired::default();
         assert!(!fired.0);
         fired.0 = true;
-        // A second attempt would be blocked by the guard
         assert!(fired.0);
     }
 

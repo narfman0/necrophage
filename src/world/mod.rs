@@ -14,6 +14,11 @@ pub struct CurrentMap(pub TileMap);
 #[derive(Component)]
 pub struct LevelEntity;
 
+/// Marker component — entity is too far from the player for AI to be active.
+/// Inserted/removed by zone_suspend_system in levels/mod.rs.
+#[derive(Component)]
+pub struct Suspended;
+
 /// Shared seeded RNG for all gameplay systems. Seeded from LevelSeed on startup
 /// so results are reproducible. Never use rand::thread_rng() in gameplay code.
 #[derive(Resource)]
@@ -57,18 +62,6 @@ pub struct PopulationDensity {
 #[derive(Resource, Default)]
 pub struct PlayerDied(pub bool);
 
-/// A level transition waiting for the screen-fade to go fully black before executing.
-/// Set by entrance/exit triggers; cleared by the fade system after firing the real event.
-#[derive(Resource, Default, Clone, PartialEq)]
-pub enum PendingLevelChange {
-    #[default]
-    None,
-    JailToDistrict,
-    /// `kind_code`: 0 = Generic, 1 = GangHideout, 2 = BossHq.
-    EnterBuilding { building_id: u64, kind_code: u8 },
-    ExitLevel,
-}
-
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
@@ -79,7 +72,6 @@ impl Plugin for WorldPlugin {
             .init_resource::<TileAssets>()
             .init_resource::<PlayerSpeedBonus>()
             .init_resource::<PopulationDensity>()
-            .init_resource::<PendingLevelChange>()
             .init_resource::<PlayerDied>()
             .register_type::<PlayerSpeedBonus>()
             .register_type::<PopulationDensity>()

@@ -4,7 +4,7 @@ use rand::Rng;
 use crate::biomass::BiomassTier;
 use crate::movement::{AttackRecovery, Body, GridPos, WALK_ARRIVAL_DIST};
 use crate::player::{ActiveEntity, Player};
-use crate::world::{map::TileMap, tile::TileType, CurrentMap, GameRng, GameState, LevelEntity, PlayerDied};
+use crate::world::{map::TileMap, tile::TileType, CurrentMap, GameRng, GameState, LevelEntity, PlayerDied, Suspended};
 
 // ── Components ───────────────────────────────────────────────────────────────
 
@@ -226,7 +226,7 @@ fn tick_attack_cooldowns(mut query: Query<&mut Attack>, time: Res<Time>) {
 }
 
 fn enemy_sight_system(
-    mut enemies: Query<(&GridPos, &mut EnemyAI, &SightRange, &mut LostTimer), (With<Enemy>, Without<Dying>)>,
+    mut enemies: Query<(&GridPos, &mut EnemyAI, &SightRange, &mut LostTimer), (With<Enemy>, Without<Dying>, Without<Suspended>)>,
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos>,
     map: Res<CurrentMap>,
@@ -253,7 +253,7 @@ const ALERT_RADIUS: i32 = 6;
 /// Triggered when an enemy first spots the player or when damage is dealt.
 fn enemy_alert_system(
     mut events: EventReader<AlertEvent>,
-    mut enemies: Query<(&GridPos, &mut EnemyAI, &mut LostTimer), (With<Enemy>, Without<Dying>)>,
+    mut enemies: Query<(&GridPos, &mut EnemyAI, &mut LostTimer), (With<Enemy>, Without<Dying>, Without<Suspended>)>,
 ) {
     for alert in events.read() {
         for (pos, mut ai, mut lost) in &mut enemies {
@@ -272,7 +272,7 @@ fn enemy_alert_system(
 /// When the timer expires the enemy gives up and resumes patrol.
 fn enemy_lost_system(
     time: Res<Time>,
-    mut enemies: Query<(&mut EnemyAI, &mut LostTimer), (With<Enemy>, Without<Dying>)>,
+    mut enemies: Query<(&mut EnemyAI, &mut LostTimer), (With<Enemy>, Without<Dying>, Without<Suspended>)>,
 ) {
     for (mut ai, mut timer) in &mut enemies {
         if *ai != EnemyAI::Chase {
@@ -287,7 +287,7 @@ fn enemy_lost_system(
 }
 
 fn enemy_patrol_system(
-    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform), (With<Enemy>, Without<Dying>)>,
+    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform), (With<Enemy>, Without<Dying>, Without<Suspended>)>,
     map: Res<CurrentMap>,
     time: Res<Time>,
     mut rng: ResMut<GameRng>,
@@ -320,7 +320,7 @@ fn enemy_patrol_system(
 }
 
 fn enemy_chase_system(
-    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&AttackMode>), (With<Enemy>, Without<Dying>)>,
+    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&AttackMode>), (With<Enemy>, Without<Dying>, Without<Suspended>)>,
     active: Res<ActiveEntity>,
     player_pos: Query<(&GridPos, &Transform), Without<Enemy>>,
     map: Res<CurrentMap>,
@@ -363,7 +363,7 @@ fn enemy_attack_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut enemies: Query<(Entity, &Transform, &GridPos, &mut Attack, &EnemyAI, Option<&AttackMode>), (With<Enemy>, Without<Dying>)>,
+    mut enemies: Query<(Entity, &Transform, &GridPos, &mut Attack, &EnemyAI, Option<&AttackMode>), (With<Enemy>, Without<Dying>, Without<Suspended>)>,
     active: Res<ActiveEntity>,
     player_tf: Query<&Transform>,
     mut damage_events: EventWriter<DamageEvent>,
