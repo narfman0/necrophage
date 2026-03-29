@@ -77,6 +77,10 @@ pub struct SightRange(pub u32);
 #[derive(Component)]
 pub struct LostTimer(pub f32);
 
+/// Marker component — entity takes no damage while present.
+#[derive(Component)]
+pub struct Invincible;
+
 /// One-frame knockback marker: push the entity one tile away from the attacker.
 /// Applied by `apply_damage`, consumed immediately by `knockback_system`.
 #[derive(Component)]
@@ -474,10 +478,14 @@ fn apply_damage(
     mut commands: Commands,
     mut events: EventReader<DamageEvent>,
     mut health_query: Query<&mut Health>,
+    invincible: Query<(), With<Invincible>>,
     positions: Query<&GridPos>,
     mut alert_events: EventWriter<AlertEvent>,
 ) {
     for ev in events.read() {
+        if invincible.get(ev.target).is_ok() {
+            continue;
+        }
         if let Ok(mut hp) = health_query.get_mut(ev.target) {
             hp.current -= ev.amount;
         }

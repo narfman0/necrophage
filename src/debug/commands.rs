@@ -1,7 +1,7 @@
 use bevy::pbr::DirectionalLight;
 use bevy::prelude::*;
 use crate::biomass::{Biomass, BiomassTier};
-use crate::combat::{Enemy, Health};
+use crate::combat::{Enemy, Health, Invincible};
 use crate::movement::GridPos;
 use crate::player::ActiveEntity;
 use crate::quest::QuestState;
@@ -168,6 +168,15 @@ fn execute_command(
                 "Usage: set_density <n>".into()
             }
         }
+        ["invincible", state @ ("on" | "off")] => {
+            if *state == "on" {
+                commands.entity(active.0).insert(Invincible);
+                "Invincibility ON".into()
+            } else {
+                commands.entity(active.0).remove::<Invincible>();
+                "Invincibility OFF".into()
+            }
+        }
         ["shadows", state @ ("on" | "off")] => {
             let enable = *state == "on";
             let mut count = 0;
@@ -192,6 +201,7 @@ fn execute_command(
             "  print entities\n",
             "  quest advance\n",
             "  set_density <n>\n",
+            "  invincible <on|off>\n",
             "  shadows <on|off>\n",
             "  help"
         ).into(),
