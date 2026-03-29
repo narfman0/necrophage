@@ -20,11 +20,13 @@ use necrophage::combat::{Corpse, Enemy, Health};
 use necrophage::player::ActiveEntity;
 use necrophage::swarm::Swarm;
 
-/// Resource tracking current frame and the target frame count.
+/// Resource tracking current frame, target frame count, and frame timing samples.
 #[derive(Resource)]
 struct HeadlessConfig {
     current_frame: u64,
     max_frames: u64,
+    /// Frame delta times in milliseconds (skips frame 0 which is often an outlier).
+    frame_times_ms: Vec<f32>,
 }
 
 fn main() {
@@ -55,6 +57,7 @@ fn main() {
     .insert_resource(HeadlessConfig {
         current_frame: 0,
         max_frames,
+        frame_times_ms: Vec::with_capacity(max_frames as usize),
     })
     .add_plugins(necrophage::NecrophagePlugin)
     .add_systems(Last, tick_and_maybe_report);
@@ -70,8 +73,14 @@ fn tick_and_maybe_report(
     enemies: Query<(Entity, Option<&Corpse>), With<Enemy>>,
     biomass: Option<Res<Biomass>>,
     swarm: Option<Res<Swarm>>,
+    time: Res<Time>,
 ) {
     config.current_frame += 1;
+
+    // Skip frame 0 — it includes startup overhead and skews stats.
+    if config.current_frame > 1 {
+        config.frame_times_ms.push(time.delta_secs() * 1000.0);
+    }
 
     if config.current_frame < config.max_frames {
         return;
@@ -103,6 +112,23 @@ fn tick_and_maybe_report(
     let swarm_size = swarm.as_ref().map(|s| s.members.len() as i64).unwrap_or(-1);
     let biomass_val = biomass.as_ref().map(|b| b.0).unwrap_or(-1.0);
 
+    // Compute frame-time stats.
+    let samples = &config.frame_times_ms;
+    let ft_avg = if samples.is_empty() {
+        0.0f64
+    } else {
+        samples.iter().map(|&v| v as f64).sum::<f64>() / samples.len() as f64
+    };
+    let ft_min = samples.iter().cloned().fold(f32::MAX, f32::min) as f64;
+    let ft_max = samples.iter().cloned().fold(0.0f32, f32::max) as f64;
+    let ft_p95 = {
+        let mut sorted = samples.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let idx = ((sorted.len() as f64) * 0.95) as usize;
+        sorted.get(idx.saturating_sub(1)).cloned().unwrap_or(0.0) as f64
+    };
+    let fps_avg = if ft_avg > 0.0 { 1000.0 / ft_avg } else { 0.0 };
+
     println!(
         "{}",
         serde_json::json!({
@@ -113,6 +139,14 @@ fn tick_and_maybe_report(
             "player_hp_max": player_hp_max,
             "swarm_size": swarm_size,
             "biomass": biomass_val,
+            "timing": {
+                "fps_avg": (fps_avg * 10.0).round() / 10.0,
+                "frame_ms_avg": (ft_avg * 100.0).round() / 100.0,
+                "frame_ms_min": (ft_min * 100.0).round() / 100.0,
+                "frame_ms_max": (ft_max * 100.0).round() / 100.0,
+                "frame_ms_p95": (ft_p95 * 100.0).round() / 100.0,
+                "sample_count": samples.len(),
+            }
         })
     );
 
