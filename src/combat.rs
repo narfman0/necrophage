@@ -391,28 +391,42 @@ fn enemy_attack_system(
             }
             AttackMode::Ranged => {
                 if dist <= RANGED_ATTACK_RANGE {
-                    // Spawn a projectile heading toward the player.
-                    commands.spawn((
-                        Projectile {
-                            target: active.0,
-                            damage: atk.damage,
-                            lifetime: 3.0,
-                        },
-                        Mesh3d(meshes.add(Sphere::new(0.1))),
-                        MeshMaterial3d(materials.add(StandardMaterial {
-                            base_color: Color::srgb(1.0, 0.6, 0.0),
-                            emissive: LinearRgba::new(2.0, 1.0, 0.0, 1.0),
-                            ..default()
-                        })),
-                        Transform::from_translation(enemy_tf.translation + Vec3::new(0.0, 0.5, 0.0)),
-                        LevelEntity,
-                    ));
+                    spawn_projectile(
+                        &mut commands, &mut meshes, &mut materials,
+                        enemy_tf.translation, active.0, atk.damage,
+                        Color::srgb(1.0, 0.6, 0.0), LinearRgba::new(2.0, 1.0, 0.0, 1.0),
+                    );
                     atk.timer = atk.cooldown;
                     commands.entity(entity).insert(AttackRecovery(0.2));
                 }
             }
         }
     }
+}
+
+/// Spawn a projectile from `from_pos` toward `target`.
+/// Used by enemies, the active player, and swarm members.
+pub fn spawn_projectile(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    from_pos: Vec3,
+    target: Entity,
+    damage: f32,
+    color: Color,
+    emissive: LinearRgba,
+) {
+    commands.spawn((
+        Projectile { target, damage, lifetime: 3.0 },
+        Mesh3d(meshes.add(Sphere::new(0.1))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: color,
+            emissive,
+            ..default()
+        })),
+        Transform::from_translation(from_pos + Vec3::new(0.0, 0.5, 0.0)),
+        LevelEntity,
+    ));
 }
 
 fn projectile_system(
@@ -448,12 +462,15 @@ fn projectile_system(
 
 fn player_attack_system(
     mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     active: Res<ActiveEntity>,
     active_query: Query<(&Transform, &GridPos)>,
     mut attackers: Query<&mut Attack>,
-    targets: Query<(Entity, &Transform), (With<Health>, Without<Player>)>,
+    attack_modes: Query<&AttackMode>,
+    targets: Query<(Entity, &Transform), With<Enemy>>,
     tier: Res<BiomassTier>,
     mut damage_events: EventWriter<DamageEvent>,
 ) {
@@ -466,20 +483,38 @@ fn player_attack_system(
         return;
     }
     let base_damage = atk.damage * tier.damage_multiplier();
-    let mut hit_any = false;
-    for (target_entity, target_tf) in &targets {
-        if dist_xz(player_tf.translation, target_tf.translation) <= MELEE_RANGE {
-            damage_events.send(DamageEvent {
-                target: target_entity,
-                amount: base_damage,
-                attacker_pos: Some(*player_grid),
-            });
-            hit_any = true;
+    let is_ranged = attack_modes.get(active.0).ok() == Some(&AttackMode::Ranged);
+
+    if is_ranged {
+        let nearest = targets
+            .iter()
+            .filter(|(_, tf)| dist_xz(player_tf.translation, tf.translation) <= RANGED_ATTACK_RANGE)
+            .min_by_key(|(_, tf)| (dist_xz(player_tf.translation, tf.translation) * 1000.0) as i32);
+        if let Some((target_entity, _)) = nearest {
+            spawn_projectile(
+                &mut commands, &mut meshes, &mut materials,
+                player_tf.translation, target_entity, base_damage,
+                Color::srgb(0.2, 1.0, 0.4), LinearRgba::new(0.0, 3.0, 0.5, 1.0),
+            );
+            atk.timer = atk.cooldown;
+            commands.entity(active.0).insert(AttackRecovery(0.2));
         }
-    }
-    if hit_any {
-        atk.timer = atk.cooldown;
-        commands.entity(active.0).insert(AttackRecovery(0.35));
+    } else {
+        let mut hit_any = false;
+        for (target_entity, target_tf) in &targets {
+            if dist_xz(player_tf.translation, target_tf.translation) <= MELEE_RANGE {
+                damage_events.send(DamageEvent {
+                    target: target_entity,
+                    amount: base_damage,
+                    attacker_pos: Some(*player_grid),
+                });
+                hit_any = true;
+            }
+        }
+        if hit_any {
+            atk.timer = atk.cooldown;
+            commands.entity(active.0).insert(AttackRecovery(0.35));
+        }
     }
 }
 
@@ -562,14 +597,14 @@ fn consume_corpse_system(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     active: Res<ActiveEntity>,
-    player_pos: Query<&GridPos, With<Player>>,
+    active_pos: Query<&GridPos>,
     corpses: Query<(Entity, &GridPos, &Corpse)>,
     mut biomass: ResMut<crate::biomass::Biomass>,
 ) {
     if !keys.just_pressed(KeyCode::KeyE) {
         return;
     }
-    let Ok(player_gp) = player_pos.get(active.0) else { return };
+    let Ok(player_gp) = active_pos.get(active.0) else { return };
 
     // Find the nearest corpse within range.
     let mut best: Option<(Entity, i32, f32)> = None;
@@ -726,28 +761,28 @@ const KILL_HEAL: f32 = 5.0;
 
 fn heal_on_kill(
     mut events: EventReader<EntityDied>,
-    active: Res<ActiveEntity>,
     mut health: Query<&mut Health, With<Player>>,
+    enemies: Query<(), With<Enemy>>,
 ) {
-    let kill_count = events.read().count();
+    let kill_count = events.read().filter(|e| enemies.get(e.entity).is_ok()).count();
     if kill_count == 0 {
         return;
     }
-    if let Ok(mut hp) = health.get_mut(active.0) {
+    for mut hp in &mut health {
         hp.current = (hp.current + KILL_HEAL * kill_count as f32).min(hp.max);
     }
 }
 
 fn player_death_system(
-    active: Res<ActiveEntity>,
-    health_query: Query<&Health, With<Player>>,
+    player_health: Query<&Health, With<Player>>,
     mut player_died: ResMut<PlayerDied>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
-    let Ok(hp) = health_query.get(active.0) else { return };
-    if hp.current <= 0.0 && !player_died.0 {
-        player_died.0 = true;
-        next_state.set(GameState::GameOver);
+    for hp in &player_health {
+        if hp.current <= 0.0 && !player_died.0 {
+            player_died.0 = true;
+            next_state.set(GameState::GameOver);
+        }
     }
 }
 

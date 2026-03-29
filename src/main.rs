@@ -10,6 +10,7 @@ pub mod npc;
 pub mod player;
 pub mod population;
 pub mod quest;
+pub mod swarm;
 pub mod world;
 
 use bevy::prelude::*;
@@ -24,6 +25,7 @@ use movement::MovementPlugin;
 use npc::NpcPlugin;
 use player::PlayerPlugin;
 use population::PopulationPlugin;
+use swarm::SwarmPlugin;
 use combat::Health;
 use player::ActiveEntity;
 use quest::{QuestPlugin, QuestState};
@@ -47,6 +49,7 @@ impl Plugin for NecrophagePlugin {
             EndingPlugin,
             PopulationPlugin,
             MinimapPlugin,
+            SwarmPlugin,
         ));
     }
 }
