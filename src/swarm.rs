@@ -340,7 +340,7 @@ fn swarm_follow_system(
             path.recalc_timer -= dt;
             if path.recalc_timer <= 0.0 {
                 path.steps = map.0.astar((member_gp.x, member_gp.y), (leader_gp.x, leader_gp.y)).into();
-                path.recalc_timer = 0.4;
+                path.recalc_timer = 0.4 + (entity.index() % 5) as f32 * 0.08;
             }
             while path.steps.front() == Some(&(member_gp.x, member_gp.y)) {
                 path.steps.pop_front();
@@ -418,7 +418,7 @@ fn swarm_ai_system(
             path.recalc_timer -= dt;
             if path.recalc_timer <= 0.0 {
                 path.steps = map.0.astar((member_gp.x, member_gp.y), (enemy_gp.x, enemy_gp.y)).into();
-                path.recalc_timer = 0.4;
+                path.recalc_timer = 0.4 + (entity.index() % 5) as f32 * 0.08;
             }
             while path.steps.front() == Some(&(member_gp.x, member_gp.y)) {
                 path.steps.pop_front();

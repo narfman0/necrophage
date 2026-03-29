@@ -348,7 +348,7 @@ fn enemy_patrol_system(
 }
 
 fn enemy_chase_system(
-    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&AttackMode>, Option<&mut EntityPath>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
+    mut enemies: Query<(Entity, &mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&AttackMode>, Option<&mut EntityPath>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
     active: Res<ActiveEntity>,
     player_pos: Query<(&GridPos, &Transform), Without<Enemy>>,
     map: Res<CurrentMap>,
@@ -356,7 +356,7 @@ fn enemy_chase_system(
 ) {
     let Ok((target, target_tf)) = player_pos.get(active.0) else { return };
     let dt = time.delta_secs();
-    for (mut pos, _timer, ai, transform, atk_recovery, mode, mut path_opt) in &mut enemies {
+    for (entity, mut pos, _timer, ai, transform, atk_recovery, mode, mut path_opt) in &mut enemies {
         if *ai != EnemyAI::Chase {
             continue;
         }
@@ -379,7 +379,8 @@ fn enemy_chase_system(
             path.recalc_timer -= dt;
             if path.recalc_timer <= 0.0 {
                 path.steps = map.0.astar((pos.x, pos.y), (target.x, target.y)).into();
-                path.recalc_timer = 0.5;
+                // Stagger recalcs across 5 slots so all enemies don't A* on the same frame.
+                path.recalc_timer = 0.5 + (entity.index() % 5) as f32 * 0.1;
             }
             if let Some(&(nx, ny)) = path.steps.front() {
                 if map.0.is_walkable(nx, ny) {
