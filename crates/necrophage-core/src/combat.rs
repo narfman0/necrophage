@@ -3,7 +3,7 @@ use rand::Rng;
 
 use crate::biomass::{BiomassOrb, BiomassTier, OrbValue};
 use crate::dialogue::DialogueQueue;
-use crate::movement::GridPos;
+use crate::movement::{Body, GridPos};
 use crate::player::{ActiveEntity, Player};
 use crate::possession::Corpse;
 use crate::world::{CurrentMap, GameRng, GameState, LevelEntity};
@@ -71,6 +71,18 @@ pub struct Knockback {
 }
 
 const LOST_TIMEOUT: f32 = 2.0;
+
+/// Melee attack range in world units (XZ plane circle distance).
+const MELEE_RANGE: f32 = 1.5;
+/// Boss melee range — slightly larger to match its area-of-effect swipe.
+const BOSS_MELEE_RANGE: f32 = 2.5;
+
+/// XZ-plane (2-D) distance between two world-space positions.
+fn dist_xz(a: Vec3, b: Vec3) -> f32 {
+    let dx = a.x - b.x;
+    let dz = a.z - b.z;
+    (dx * dx + dz * dz).sqrt()
+}
 
 // ── AI state ─────────────────────────────────────────────────────────────────
 
@@ -247,22 +259,23 @@ fn enemy_chase_system(
 }
 
 fn enemy_attack_system(
-    mut enemies: Query<(&GridPos, &mut Attack, &EnemyAI), With<Enemy>>,
+    mut enemies: Query<(&Transform, &GridPos, &mut Attack, &EnemyAI), With<Enemy>>,
     active: Res<ActiveEntity>,
-    player_pos: Query<&GridPos>,
+    player_tf: Query<&Transform>,
     mut damage_events: EventWriter<DamageEvent>,
 ) {
-    let Ok(target_pos) = player_pos.get(active.0) else { return };
-    for (pos, mut atk, ai) in &mut enemies {
+    let Ok(target_tf) = player_tf.get(active.0) else { return };
+    for (enemy_tf, grid, mut atk, ai) in &mut enemies {
         if *ai != EnemyAI::Chase && *ai != EnemyAI::AttackTarget {
             continue;
         }
-        let dist = (pos.x - target_pos.x).abs().max((pos.y - target_pos.y).abs());
-        if dist <= 1 && atk.timer <= 0.0 {
+        if dist_xz(enemy_tf.translation, target_tf.translation) <= MELEE_RANGE
+            && atk.timer <= 0.0
+        {
             damage_events.send(DamageEvent {
                 target: active.0,
                 amount: atk.damage,
-                attacker_pos: Some(*pos),
+                attacker_pos: Some(*grid),
             });
             atk.timer = atk.cooldown;
         }
@@ -273,9 +286,9 @@ fn player_attack_system(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     active: Res<ActiveEntity>,
-    active_pos: Query<&GridPos>,
+    active_query: Query<(&Transform, &GridPos)>,
     mut attackers: Query<&mut Attack>,
-    enemies: Query<(Entity, &GridPos), With<Enemy>>,
+    enemies: Query<(Entity, &Transform), With<Enemy>>,
     tier: Res<BiomassTier>,
     mut damage_events: EventWriter<DamageEvent>,
     dialogue: Res<DialogueQueue>,
@@ -287,21 +300,19 @@ fn player_attack_system(
     if keys.just_pressed(KeyCode::Space) && !dialogue.lines.is_empty() {
         return;
     }
-    let Ok(pos) = active_pos.get(active.0) else { return };
+    let Ok((player_tf, player_grid)) = active_query.get(active.0) else { return };
     let Ok(mut atk) = attackers.get_mut(active.0) else { return };
     if atk.timer > 0.0 {
         return;
     }
     let base_damage = atk.damage * tier.damage_multiplier();
     let mut hit_any = false;
-    for (enemy_entity, enemy_pos) in &enemies {
-        let dx = (enemy_pos.x - pos.x).abs();
-        let dy = (enemy_pos.y - pos.y).abs();
-        if dx <= 1 && dy <= 1 {
+    for (enemy_entity, enemy_tf) in &enemies {
+        if dist_xz(player_tf.translation, enemy_tf.translation) <= MELEE_RANGE {
             damage_events.send(DamageEvent {
                 target: enemy_entity,
                 amount: base_damage,
-                attacker_pos: Some(*pos),
+                attacker_pos: Some(*player_grid),
             });
             hit_any = true;
         }
@@ -406,14 +417,14 @@ fn boss_ai_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    active_pos: Query<&GridPos, Without<MobBoss>>,
-    mut bosses: Query<(&GridPos, &mut BossAI, &mut Attack, &Health), With<MobBoss>>,
+    active_pos: Query<&Transform, Without<MobBoss>>,
+    mut bosses: Query<(&Transform, &GridPos, &mut BossAI, &mut Attack, &Health), With<MobBoss>>,
     active: Res<ActiveEntity>,
     mut damage_events: EventWriter<DamageEvent>,
     time: Res<Time>,
 ) {
-    let Ok(target_pos) = active_pos.get(active.0) else { return };
-    for (boss_pos, mut ai, mut atk, hp) in &mut bosses {
+    let Ok(target_tf) = active_pos.get(active.0) else { return };
+    for (boss_tf, boss_grid, mut ai, mut atk, hp) in &mut bosses {
         ai.phase_timer -= time.delta_secs();
         if ai.phase_timer > 0.0 {
             continue;
@@ -421,13 +432,12 @@ fn boss_ai_system(
 
         match ai.phase % 3 {
             0 => {
-                // Melee swipe — high damage to player if adjacent
-                let dist = (boss_pos.x - target_pos.x).abs().max((boss_pos.y - target_pos.y).abs());
-                if dist <= 2 {
+                // Melee swipe — high damage to player if within range
+                if dist_xz(boss_tf.translation, target_tf.translation) <= BOSS_MELEE_RANGE {
                     damage_events.send(DamageEvent {
                         target: active.0,
                         amount: atk.damage * 1.5,
-                        attacker_pos: Some(*boss_pos),
+                        attacker_pos: Some(*boss_grid),
                     });
                 }
                 ai.phase_timer = 3.0;
@@ -437,7 +447,7 @@ fn boss_ai_system(
                 damage_events.send(DamageEvent {
                     target: active.0,
                     amount: atk.damage * 0.8,
-                    attacker_pos: Some(*boss_pos),
+                    attacker_pos: Some(*boss_grid),
                 });
                 ai.phase_timer = 2.5;
             }
@@ -447,8 +457,8 @@ fn boss_ai_system(
                     atk.cooldown = 0.6; // enrage: faster attack cycle
                 }
                 for offset in [(1i32, 0i32), (-1, 0)] {
-                    let ax = (boss_pos.x + offset.0).clamp(0, 59);
-                    let ay = (boss_pos.y + offset.1).clamp(0, 39);
+                    let ax = (boss_grid.x + offset.0).clamp(0, 59);
+                    let ay = (boss_grid.y + offset.1).clamp(0, 39);
                     let e = spawn_enemy(
                         &mut commands,
                         &mut meshes,
@@ -543,6 +553,7 @@ pub fn spawn_enemy(
     commands
         .spawn((
             Enemy,
+            Body,
             EnemyAI::Patrol,
             PatrolTimer(0.0),
             SightRange(8),

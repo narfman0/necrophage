@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::combat::{Attack, Health};
 use crate::dialogue::DialogueQueue;
-use crate::movement::GridPos;
+use crate::movement::{Body, GridPos};
 use crate::player::ActiveEntity;
 use crate::quest::QuestState;
 use crate::world::{CurrentMap, GameState};
@@ -44,6 +44,7 @@ fn spawn_liberator(
     let start = GridPos { x: 3, y: 5 };
     commands.spawn((
         Npc,
+        Body,
         Liberator,
         LiberatorState::Imprisoned,
         ScriptTimer(2.0),

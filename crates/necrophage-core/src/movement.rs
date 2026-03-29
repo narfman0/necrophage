@@ -19,10 +19,15 @@ pub struct MoveDir(pub Vec2);
 
 /// Movement speed in world units per second.
 const MOVE_SPEED: f32 = 5.5;
-/// Entity collision radius in world units.
-const ENTITY_RADIUS: f32 = 0.35;
+/// Entity collision radius in world units (wall collision + body separation).
+pub const ENTITY_RADIUS: f32 = 0.35;
 /// Lerp speed for non-player entities (enemies / NPCs).
 const LERP_SPEED: f32 = 16.0;
+
+/// Marker: this entity has a physical body that participates in entity-entity
+/// separation. Add to all characters (player, enemies, NPCs).
+#[derive(Component, Reflect)]
+pub struct Body;
 
 pub struct MovementPlugin;
 
@@ -30,11 +35,13 @@ impl Plugin for MovementPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<GridPos>()
             .register_type::<MoveDir>()
+            .register_type::<Body>()
             .add_systems(
                 Update,
                 (
                     wasd_input,
                     apply_movement.after(wasd_input),
+                    separate_entities.after(apply_movement),
                     tab_cycle_entity,
                 )
                 .run_if(in_state(GameState::Playing)),
@@ -126,6 +133,43 @@ fn lerp_transforms(
     for (pos, mut transform) in &mut query {
         let target = tile_to_world(pos.x, pos.y) + Vec3::new(0.0, 0.5, 0.0);
         transform.translation = transform.translation.lerp(target, speed.min(1.0));
+    }
+}
+
+/// Push Body+MoveDir entities away from any overlapping Body entities.
+/// Uses a snapshot of all body positions to handle MoveDir-vs-MoveDir separation too.
+fn separate_entities(
+    mut params: ParamSet<(
+        Query<(Entity, &Transform), With<Body>>,
+        Query<(Entity, &mut Transform, &mut GridPos), (With<Body>, With<MoveDir>)>,
+    )>,
+) {
+    let min_dist = ENTITY_RADIUS * 2.0;
+    let min_dist_sq = min_dist * min_dist;
+
+    let positions: Vec<(Entity, Vec3)> = params
+        .p0()
+        .iter()
+        .map(|(e, tf)| (e, tf.translation))
+        .collect();
+
+    for (me, mut my_tf, mut my_gp) in &mut params.p1() {
+        for &(other, other_pos) in &positions {
+            if other == me {
+                continue;
+            }
+            let dx = my_tf.translation.x - other_pos.x;
+            let dz = my_tf.translation.z - other_pos.z;
+            let dist_sq = dx * dx + dz * dz;
+            if dist_sq > 0.0001 && dist_sq < min_dist_sq {
+                let dist = dist_sq.sqrt();
+                let push = (min_dist - dist) / dist;
+                my_tf.translation.x += dx * push;
+                my_tf.translation.z += dz * push;
+                my_gp.x = my_tf.translation.x.round() as i32;
+                my_gp.y = my_tf.translation.z.round() as i32;
+            }
+        }
     }
 }
 

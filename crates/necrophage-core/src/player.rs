@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::camera::CameraTarget;
 use crate::combat::Health;
-use crate::movement::{GridPos, MoveDir};
+use crate::movement::{Body, GridPos, MoveDir};
 use crate::possession::Controlled;
 
 #[derive(Component)]
@@ -28,6 +28,7 @@ fn spawn_player(
     let player = commands
         .spawn((
             Player,
+            Body,
             Controlled,
             start,
             MoveDir::default(),
