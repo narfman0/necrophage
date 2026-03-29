@@ -627,6 +627,7 @@ pub fn spawn_enemy(
     let bar_entity = commands
         .spawn((
             HpBarRoot,
+            LevelEntity,
             Mesh3d(meshes.add(Cuboid::new(0.8, 0.08, 0.08))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::srgb(1.0, 0.1, 0.1),

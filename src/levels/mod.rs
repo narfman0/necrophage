@@ -87,6 +87,12 @@ pub struct Entrance {
 #[derive(Component)]
 pub struct Suspended;
 
+/// Prevents building re-entry immediately after entering or exiting.
+/// Ticks down each frame; `check_entrances` and `check_building_exit` are
+/// blocked while this is positive.
+#[derive(Resource, Default)]
+pub struct EntranceCooldown(pub f32);
+
 pub struct LevelPlugin;
 
 impl Plugin for LevelPlugin {
@@ -95,6 +101,7 @@ impl Plugin for LevelPlugin {
             .init_resource::<CurrentLevelId>()
             .init_resource::<LevelStack>()
             .init_resource::<LevelCache>()
+            .init_resource::<EntranceCooldown>()
             .add_event::<EnterBuildingEvent>()
             .add_event::<ExitLevelEvent>()
             .add_systems(Startup, (seed_rng, generate_jail).chain())
@@ -102,7 +109,9 @@ impl Plugin for LevelPlugin {
                 Update,
                 (
                     handle_transition,
+                    tick_entrance_cooldown,
                     check_entrances,
+                    check_building_exit,
                     enter_building_system,
                     exit_level_system,
                 ),
@@ -173,7 +182,7 @@ fn handle_transition(
     tile_assets: Res<TileAssets>,
     mut events: EventReader<LevelTransitionEvent>,
     level_entities: Query<Entity, With<LevelEntity>>,
-    hp_bars: Query<Entity, With<HpBarRoot>>,
+    hp_bars: Query<Entity, (With<HpBarRoot>, Without<LevelEntity>)>,
     seed: Res<LevelSeed>,
     active: Res<ActiveEntity>,
     mut player_query: Query<(&mut GridPos, &mut Transform), With<Player>>,
@@ -287,12 +296,21 @@ fn handle_transition(
 
 // ── Entrance check ────────────────────────────────────────────────────────────
 
+fn tick_entrance_cooldown(mut cooldown: ResMut<EntranceCooldown>, time: Res<Time>) {
+    cooldown.0 = (cooldown.0 - time.delta_secs()).max(0.0);
+}
+
 fn check_entrances(
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos>,
-    entrances: Query<(&GridPos, &Entrance)>,
+    // Without<Suspended> ensures district entrances are ignored while inside a building.
+    entrances: Query<(&GridPos, &Entrance), Without<Suspended>>,
     mut enter_events: EventWriter<EnterBuildingEvent>,
+    cooldown: Res<EntranceCooldown>,
 ) {
+    if cooldown.0 > 0.0 {
+        return;
+    }
     let Ok(pos) = player_pos.get(active.0) else { return };
     for (ent_pos, entrance) in &entrances {
         if pos.x == ent_pos.x && pos.y == ent_pos.y {
@@ -301,6 +319,31 @@ fn check_entrances(
                 kind: entrance.kind,
             });
         }
+    }
+}
+
+/// Fires ExitLevelEvent when the player steps on a building exit tile.
+/// Only active when the current level is a building interior.
+fn check_building_exit(
+    active: Res<ActiveEntity>,
+    player_pos: Query<&GridPos>,
+    map: Res<CurrentMap>,
+    current_level: Res<CurrentLevelId>,
+    mut exit_events: EventWriter<ExitLevelEvent>,
+    mut cooldown: ResMut<EntranceCooldown>,
+) {
+    if cooldown.0 > 0.0 {
+        return;
+    }
+    if !matches!(current_level.0, LevelId::Building(_)) {
+        return;
+    }
+    let Ok(pos) = player_pos.get(active.0) else { return };
+    let Some((ex, ey)) = map.0.exit_pos else { return };
+    let dist = (pos.x - ex).abs().max((pos.y - ey).abs());
+    if dist <= 1 {
+        cooldown.0 = 0.5;
+        exit_events.send(ExitLevelEvent);
     }
 }
 
@@ -318,12 +361,20 @@ fn enter_building_system(
     mut level_stack: ResMut<LevelStack>,
     mut level_cache: ResMut<LevelCache>,
     mut current_level: ResMut<CurrentLevelId>,
+    current_map: Res<CurrentMap>,
+    mut cooldown: ResMut<EntranceCooldown>,
     seed: Res<LevelSeed>,
 ) {
     for ev in events.read() {
         let player_gp = player_query.get(active.0)
             .map(|(gp, _)| *gp)
             .unwrap_or(GridPos { x: 0, y: 0 });
+
+        // Cache the parent level map so exit_level_system can restore it.
+        level_cache.0.entry(current_level.0.clone()).or_insert_with(|| CachedLevel {
+            map: current_map.0.clone(),
+            dead_enemy_positions: HashSet::new(),
+        });
 
         // Push current level + player return pos onto stack.
         level_stack.0.push((current_level.0.clone(), player_gp));
@@ -410,6 +461,8 @@ fn enter_building_system(
 
         commands.insert_resource(CurrentMap(map));
         current_level.0 = level_id;
+        // Prevent immediate re-exit on the same or next frame.
+        cooldown.0 = 0.5;
     }
 }
 
@@ -418,20 +471,26 @@ fn enter_building_system(
 fn exit_level_system(
     mut commands: Commands,
     mut events: EventReader<ExitLevelEvent>,
+    // Without<Suspended> ensures only the current building's entities are despawned,
+    // not the parent level's entities that are waiting suspended.
     level_entities: Query<Entity, (With<LevelEntity>, Without<Suspended>)>,
-    hp_bars: Query<Entity, With<HpBarRoot>>,
+    // Safety net for any HpBarRoot that somehow lacks LevelEntity.
+    hp_bars: Query<Entity, (With<HpBarRoot>, Without<Suspended>)>,
     suspended: Query<Entity, With<Suspended>>,
     mut player_query: Query<(&mut GridPos, &mut Transform), With<Player>>,
     active: Res<ActiveEntity>,
     mut level_stack: ResMut<LevelStack>,
     mut current_level: ResMut<CurrentLevelId>,
     cached_maps: Res<LevelCache>,
+    mut cooldown: ResMut<EntranceCooldown>,
 ) {
     for _ in events.read() {
         // Despawn current building entities and their HP bars.
         for e in level_entities.iter().chain(hp_bars.iter()) {
             commands.entity(e).despawn_recursive();
         }
+        // Prevent stepping back onto the entrance tile immediately.
+        cooldown.0 = 0.5;
 
         // Restore parent level entities.
         for e in &suspended {
