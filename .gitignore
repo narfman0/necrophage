@@ -4,3 +4,4 @@ target
 **/*.rs.bk
 *.pdb
 **/mutants.out*/
+trace_event*.json

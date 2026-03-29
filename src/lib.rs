@@ -14,10 +14,6 @@ pub mod swarm;
 pub mod world;
 
 use bevy::prelude::*;
-use bevy::render::{
-    settings::{Backends, RenderCreation, WgpuSettings},
-    RenderPlugin,
-};
 use biomass::BiomassPlugin;
 use camera::CameraPlugin;
 use combat::CombatPlugin;
@@ -83,13 +79,6 @@ pub fn run() {
                 }),
                 ..default()
             })
-            .set(RenderPlugin {
-                render_creation: RenderCreation::Automatic(WgpuSettings {
-                    backends: Some(Backends::DX12),
-                    ..default()
-                }),
-                ..default()
-            }),
     )
     .add_plugins(NecrophagePlugin)
     .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
