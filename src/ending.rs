@@ -102,8 +102,6 @@ fn check_ending_condition(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn ending_requires_both_conditions() {
         // Neither condition alone should trigger the ending.

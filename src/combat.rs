@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use rand::Rng;
 
 use crate::biomass::{BiomassOrb, BiomassTier, OrbValue};
-use crate::dialogue::DialogueQueue;
 use crate::movement::{Body, GridPos, WALK_ARRIVAL_DIST};
 use crate::player::{ActiveEntity, Player};
 use crate::world::{map::TileMap, tile::TileType, CurrentMap, GameRng, GameState, LevelEntity};
@@ -334,13 +333,8 @@ fn player_attack_system(
     enemies: Query<(Entity, &Transform), With<Enemy>>,
     tier: Res<BiomassTier>,
     mut damage_events: EventWriter<DamageEvent>,
-    dialogue: Res<DialogueQueue>,
 ) {
-    if !keys.just_pressed(KeyCode::Space) && !buttons.just_pressed(MouseButton::Left) {
-        return;
-    }
-    // Space is consumed by dialogue when a line is showing; don't also attack.
-    if keys.just_pressed(KeyCode::Space) && !dialogue.lines.is_empty() {
+    if !keys.just_pressed(KeyCode::KeyJ) && !buttons.just_pressed(MouseButton::Left) {
         return;
     }
     let Ok((player_tf, player_grid)) = active_query.get(active.0) else { return };
@@ -485,8 +479,8 @@ fn boss_ai_system(
                     atk.cooldown = 0.6; // enrage: faster attack cycle
                 }
                 for offset in [(1i32, 0i32), (-1, 0)] {
-                    let ax = (boss_grid.x + offset.0).clamp(0, 59);
-                    let ay = (boss_grid.y + offset.1).clamp(0, 39);
+                    let ax = (boss_grid.x + offset.0).clamp(0, 119);
+                    let ay = (boss_grid.y + offset.1).clamp(0, 79);
                     let e = spawn_enemy(
                         &mut commands,
                         &mut meshes,

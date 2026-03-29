@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::camera::CameraTarget;
-use crate::combat::Health;
+use crate::combat::{Attack, Health};
 use crate::movement::{Body, Dash, GridPos, MoveDir};
 
 #[derive(Component)]
@@ -32,12 +32,13 @@ fn spawn_player(
             MoveDir::default(),
             Dash::default(),
             Health::new(50.0),
-            Mesh3d(meshes.add(Capsule3d::new(0.3, 0.6))),
+            Attack::new(10.0, 0.5),
+            Mesh3d(meshes.add(Capsule3d::new(0.12, 0.18))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::srgb(0.1, 0.9, 0.1),
                 ..default()
             })),
-            Transform::from_xyz(start.x as f32, 0.5, start.y as f32),
+            Transform::from_xyz(start.x as f32, 0.21, start.y as f32),
         ))
         .id();
 

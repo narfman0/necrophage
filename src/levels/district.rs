@@ -19,48 +19,52 @@ impl Default for DistrictGenerator {
 
 impl LevelGenerator for DistrictGenerator {
     fn generate(&self, rng: &mut impl Rng) -> (TileMap, SpawnInfo) {
-        let w = 60i32;
-        let h = 40i32;
+        let w = 120i32;
+        let h = 80i32;
         let mut map = TileMap::new(w, h, TileType::Wall);
 
-        // Main streets: horizontal and vertical avenues (2 tiles wide each)
+        // Main streets: horizontal and vertical avenues (4 tiles wide each)
         for x in 0..w {
-            map.set(x, 5, TileType::Floor);
-            map.set(x, 6, TileType::Floor);
-            map.set(x, h / 2, TileType::Floor);
-            map.set(x, h / 2 + 1, TileType::Floor);
-            map.set(x, h - 5, TileType::Floor);
-            map.set(x, h - 4, TileType::Floor);
+            for dy in 0..4 {
+                map.set(x, 10 + dy, TileType::Floor);
+                map.set(x, h / 2 + dy, TileType::Floor);
+                map.set(x, h - 10 + dy, TileType::Floor);
+            }
         }
         for y in 0..h {
-            map.set(5, y, TileType::Floor);
-            map.set(6, y, TileType::Floor);
-            map.set(w / 2, y, TileType::Floor);
-            map.set(w / 2 + 1, y, TileType::Floor);
-            map.set(w - 5, y, TileType::Floor);
-            map.set(w - 4, y, TileType::Floor);
+            for dx in 0..4 {
+                map.set(10 + dx, y, TileType::Floor);
+                map.set(w / 2 + dx, y, TileType::Floor);
+                map.set(w - 10 + dx, y, TileType::Floor);
+            }
         }
 
         // Carve random buildings — collect entrance data before SpawnInfo.
         let building_count = rng.gen_range(6..12);
         let mut entrance_positions: Vec<(i32, i32, u64, BuildingKind)> = Vec::new();
         for i in 0..building_count {
-            let bx = rng.gen_range(7..w - 12);
-            let by = rng.gen_range(7..h - 12);
-            let bw = rng.gen_range(4..9);
-            let bh = rng.gen_range(4..8);
+            let bx = rng.gen_range(15..w - 20);
+            let by = rng.gen_range(15..h - 20);
+            let bw = rng.gen_range(8..16);
+            let bh = rng.gen_range(8..14);
             let x2 = (bx + bw).min(w - 2);
             let y2 = (by + bh).min(h - 2);
             if !overlaps_street(bx, by, x2, y2, w, h) {
                 carve_interior(&mut map, bx, by, x2, y2);
-                // Door on the bottom wall of the building.
-                let door_x = bx + (x2 - bx) / 2;
+                // 4-tile door on the bottom wall of the building.
+                let door_cx = bx + (x2 - bx) / 2;
                 let door_y = y2;
-                map.set(door_x, door_y, TileType::Door);
-                // Carve a floor path south from the door to the nearest street.
+                for ddx in 0..4i32 {
+                    let door_x = door_cx - 1 + ddx;
+                    if door_x > bx && door_x < x2 {
+                        map.set(door_x, door_y, TileType::Door);
+                    }
+                }
+                // Carve a 2-tile-wide floor path south from the door to the nearest street.
                 let sy = nearest_street_south(door_y, h);
                 for gy in door_y + 1..sy {
-                    map.set(door_x, gy, TileType::Floor);
+                    map.set(door_cx, gy, TileType::Floor);
+                    map.set(door_cx + 1, gy, TileType::Floor);
                 }
                 let bid = building_hash(bx, by, self.seed);
                 let kind = if i % 3 == 1 {
@@ -68,43 +72,46 @@ impl LevelGenerator for DistrictGenerator {
                 } else {
                     BuildingKind::Generic
                 };
-                entrance_positions.push((door_x, door_y, bid, kind));
+                entrance_positions.push((door_cx, door_y, bid, kind));
             }
         }
 
         // Entry point (bottom of left street)
-        let entry_x = 5i32;
+        let entry_x = 10i32;
         let entry_y = h - 1;
         map.set(entry_x, entry_y, TileType::Floor);
 
         // Mob boss building: fixed position, large room
-        let boss_bx = w - 15;
-        let boss_by = 8;
-        let boss_bx2 = w - 7;
-        let boss_by2 = 15;
+        let boss_bx = w - 30;
+        let boss_by = 16;
+        let boss_bx2 = w - 14;
+        let boss_by2 = 30;
         carve_interior(&mut map, boss_bx, boss_by, boss_bx2, boss_by2);
-        // Boss building door + entrance entry
-        let boss_door_x = boss_bx + (boss_bx2 - boss_bx) / 2;
+        // Boss building 4-tile door + entrance entry
+        let boss_door_cx = boss_bx + (boss_bx2 - boss_bx) / 2;
         let boss_door_y = boss_by2;
-        map.set(boss_door_x, boss_door_y, TileType::Door);
+        for ddx in 0..4i32 {
+            map.set(boss_door_cx - 1 + ddx, boss_door_y, TileType::Door);
+        }
         let sy = nearest_street_south(boss_door_y, h);
         for gy in boss_door_y + 1..sy {
-            map.set(boss_door_x, gy, TileType::Floor);
+            map.set(boss_door_cx, gy, TileType::Floor);
+            map.set(boss_door_cx + 1, gy, TileType::Floor);
         }
         let boss_bid = building_hash(boss_bx, boss_by, self.seed);
-        entrance_positions.push((boss_door_x, boss_door_y, boss_bid, BuildingKind::BossHq));
+        entrance_positions.push((boss_door_cx, boss_door_y, boss_bid, BuildingKind::BossHq));
 
         // Exit (sewer entrance in bottom-right corner)
-        let exit_x = w - 2;
-        let exit_y = h - 2;
+        let exit_x = w - 4;
+        let exit_y = h - 4;
         map.set(exit_x, exit_y, TileType::Exit);
         map.exit_pos = Some((exit_x, exit_y));
-        for x in w - 6..=exit_x {
-            map.set(x, h - 5, TileType::Floor);
+        for x in w - 12..=exit_x {
+            map.set(x, h - 10, TileType::Floor);
         }
 
-        let mut info = SpawnInfo::new((entry_x, h - 3));
-        info.boss_position = Some((boss_bx + (boss_bx2 - boss_bx) / 2, boss_by + 2));
+        let mut info = SpawnInfo::new((entry_x, h - 5));
+        info.boss_position = Some((boss_bx + (boss_bx2 - boss_bx) / 2, boss_by + 4));
         info.entrance_positions = entrance_positions;
 
         // Civilian and enemy spawns on streets
@@ -127,18 +134,18 @@ impl LevelGenerator for DistrictGenerator {
         }
 
         // Lieutenant
-        info.elite_positions.push((w / 2 + 2, h / 2 + 2));
+        info.elite_positions.push((w / 2 + 4, h / 2 + 4));
 
         // Streetlights at intersection corners and along avenues.
-        let street_xs = [5i32, w / 2, w - 5];
-        let street_ys = [5i32, h / 2, h - 5];
+        let street_xs = [10i32, w / 2, w - 10];
+        let street_ys = [10i32, h / 2, h - 10];
         for &sx in &street_xs {
             for &sy in &street_ys {
                 info.streetlight_positions.push((sx, sy));
             }
         }
         for &sy in &street_ys {
-            for step in (10..w).step_by(10) {
+            for step in (20..w).step_by(20) {
                 info.streetlight_positions.push((step, sy));
             }
         }
@@ -158,7 +165,7 @@ fn carve_interior(map: &mut TileMap, x1: i32, y1: i32, x2: i32, y2: i32) {
 /// Returns the y-coordinate of the nearest horizontal street that lies south
 /// (greater y) of `door_y`. Falls back to `h - 1` if none found.
 fn nearest_street_south(door_y: i32, h: i32) -> i32 {
-    [5i32, h / 2, h - 5]
+    [10i32, h / 2, h - 10]
         .iter()
         .filter(|&&sy| sy > door_y)
         .copied()
@@ -167,16 +174,16 @@ fn nearest_street_south(door_y: i32, h: i32) -> i32 {
 }
 
 fn overlaps_street(x1: i32, y1: i32, x2: i32, y2: i32, w: i32, h: i32) -> bool {
-    let street_xs = [5, w / 2, w - 5];
-    let street_ys = [5, h / 2, h - 5];
-    // Streets are 2 tiles wide: [sx, sx+1] and [sy, sy+1]
+    let street_xs = [10, w / 2, w - 10];
+    let street_ys = [10, h / 2, h - 10];
+    // Streets are 4 tiles wide: [sx, sx+3]
     for &sx in &street_xs {
-        if x2 >= sx && x1 <= sx + 1 {
+        if x2 >= sx && x1 <= sx + 3 {
             return true;
         }
     }
     for &sy in &street_ys {
-        if y2 >= sy && y1 <= sy + 1 {
+        if y2 >= sy && y1 <= sy + 3 {
             return true;
         }
     }
