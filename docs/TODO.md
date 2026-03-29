@@ -1,2 +1,3 @@
-* when entering a door, fade out screen do the work to load the level, then fade in the screen.
-* upon death, instead of blackening, just dissolve. there should be no blacken effect
+* create a minimap, activatable mby the tab key
+* the playher is not taking in damage. attacking enemies should be able to hurt the player.
+* make the attacking enemies either shoot at the player with a gun or melee. it should be about 50:50

@@ -14,6 +14,25 @@ pub enum BuildingKind {
     BossHq,
 }
 
+impl BuildingKind {
+    /// Compact representation stored in `PendingLevelChange`.
+    pub fn to_code(self) -> u8 {
+        match self {
+            BuildingKind::Generic => 0,
+            BuildingKind::GangHideout => 1,
+            BuildingKind::BossHq => 2,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Self {
+        match code {
+            1 => BuildingKind::GangHideout,
+            2 => BuildingKind::BossHq,
+            _ => BuildingKind::Generic,
+        }
+    }
+}
+
 pub struct SpawnInfo {
     pub player_start: (i32, i32),
     pub liberator_start: Option<(i32, i32)>,

@@ -52,6 +52,18 @@ pub struct PopulationDensity {
     pub boss_spawned: bool,
 }
 
+/// A level transition waiting for the screen-fade to go fully black before executing.
+/// Set by entrance/exit triggers; cleared by the fade system after firing the real event.
+#[derive(Resource, Default, Clone, PartialEq)]
+pub enum PendingLevelChange {
+    #[default]
+    None,
+    JailToDistrict,
+    /// `kind_code`: 0 = Generic, 1 = GangHideout, 2 = BossHq.
+    EnterBuilding { building_id: u64, kind_code: u8 },
+    ExitLevel,
+}
+
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
@@ -62,6 +74,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<TileAssets>()
             .init_resource::<PlayerSpeedBonus>()
             .init_resource::<PopulationDensity>()
+            .init_resource::<PendingLevelChange>()
             .register_type::<PlayerSpeedBonus>()
             .register_type::<PopulationDensity>()
             .init_state::<GameState>();

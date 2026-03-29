@@ -459,18 +459,15 @@ fn death_system(
 
 fn dissolve_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut Dying, &MeshMaterial3d<StandardMaterial>)>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut query: Query<(Entity, &mut Dying, &mut Transform)>,
     time: Res<Time>,
 ) {
-    for (entity, mut dying, mat_handle) in &mut query {
+    for (entity, mut dying, mut transform) in &mut query {
         dying.timer -= time.delta_secs();
-        let alpha = (dying.timer / DISSOLVE_DURATION).clamp(0.0, 1.0);
-        if let Some(mat) = materials.get_mut(&mat_handle.0) {
-            mat.alpha_mode = AlphaMode::Blend;
-            let c = mat.base_color.to_srgba();
-            mat.base_color = Color::srgba(c.red, c.green, c.blue, alpha);
-        }
+        // Scale to zero as entity dissolves — avoids the dark/black artefact that
+        // occurs when PBR materials are blended toward zero alpha.
+        let progress = (dying.timer / DISSOLVE_DURATION).clamp(0.0, 1.0);
+        transform.scale = Vec3::splat(progress);
         if dying.timer <= 0.0 {
             commands.entity(entity).despawn_recursive();
         }

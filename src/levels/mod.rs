@@ -16,7 +16,7 @@ use crate::movement::GridPos;
 use crate::npc::{Liberator, LiberatorState, ScriptTimer};
 use crate::player::{ActiveEntity, Player};
 use crate::quest::LevelTransitionEvent;
-use crate::world::{CurrentMap, GameRng, LevelEntity, PopulationDensity};
+use crate::world::{CurrentMap, GameRng, LevelEntity, PendingLevelChange, PopulationDensity};
 use crate::world::map::TileMap;
 use crate::world::tile::{spawn_tile, tile_to_world, TileAssets};
 use building::{BuildingGenerator};
@@ -93,6 +93,29 @@ pub struct Suspended;
 #[derive(Resource, Default)]
 pub struct EntranceCooldown(pub f32);
 
+// ── Level-transition screen fade ──────────────────────────────────────────────
+
+#[derive(Component)]
+pub struct LevelFadeOverlay;
+
+#[derive(Default, PartialEq)]
+enum LevelFadePhase {
+    #[default]
+    None,
+    FadingOut,
+    FadingIn,
+}
+
+#[derive(Resource, Default)]
+struct LevelFadeState {
+    alpha: f32,
+    phase: LevelFadePhase,
+}
+
+/// Fade out in 0.2 s (speed = 5.0), fade in over 0.45 s (speed = 2.2).
+const FADE_OUT_SPEED: f32 = 5.0;
+const FADE_IN_SPEED: f32 = 2.2;
+
 pub struct LevelPlugin;
 
 impl Plugin for LevelPlugin {
@@ -102,9 +125,10 @@ impl Plugin for LevelPlugin {
             .init_resource::<LevelStack>()
             .init_resource::<LevelCache>()
             .init_resource::<EntranceCooldown>()
+            .init_resource::<LevelFadeState>()
             .add_event::<EnterBuildingEvent>()
             .add_event::<ExitLevelEvent>()
-            .add_systems(Startup, (seed_rng, generate_jail).chain())
+            .add_systems(Startup, (seed_rng, generate_jail, spawn_level_fade_overlay).chain())
             .add_systems(
                 Update,
                 (
@@ -112,6 +136,7 @@ impl Plugin for LevelPlugin {
                     tick_entrance_cooldown,
                     check_entrances,
                     check_building_exit,
+                    drive_level_fade,
                     enter_building_system,
                     exit_level_system,
                 ),
@@ -305,34 +330,35 @@ fn check_entrances(
     player_pos: Query<&GridPos>,
     // Without<Suspended> ensures district entrances are ignored while inside a building.
     entrances: Query<(&GridPos, &Entrance), Without<Suspended>>,
-    mut enter_events: EventWriter<EnterBuildingEvent>,
+    mut pending: ResMut<PendingLevelChange>,
     cooldown: Res<EntranceCooldown>,
 ) {
-    if cooldown.0 > 0.0 {
+    if cooldown.0 > 0.0 || *pending != PendingLevelChange::None {
         return;
     }
     let Ok(pos) = player_pos.get(active.0) else { return };
     for (ent_pos, entrance) in &entrances {
         if pos.x == ent_pos.x && pos.y == ent_pos.y {
-            enter_events.send(EnterBuildingEvent {
+            *pending = PendingLevelChange::EnterBuilding {
                 building_id: entrance.building_id,
-                kind: entrance.kind,
-            });
+                kind_code: entrance.kind.to_code(),
+            };
+            return;
         }
     }
 }
 
-/// Fires ExitLevelEvent when the player steps on a building exit tile.
-/// Only active when the current level is a building interior.
+/// Triggers an ExitLevelEvent (via PendingLevelChange) when the player steps on
+/// a building exit tile. Only active when the current level is a building interior.
 fn check_building_exit(
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos>,
     map: Res<CurrentMap>,
     current_level: Res<CurrentLevelId>,
-    mut exit_events: EventWriter<ExitLevelEvent>,
-    mut cooldown: ResMut<EntranceCooldown>,
+    mut pending: ResMut<PendingLevelChange>,
+    cooldown: Res<EntranceCooldown>,
 ) {
-    if cooldown.0 > 0.0 {
+    if cooldown.0 > 0.0 || *pending != PendingLevelChange::None {
         return;
     }
     if !matches!(current_level.0, LevelId::Building(_)) {
@@ -342,8 +368,89 @@ fn check_building_exit(
     let Some((ex, ey)) = map.0.exit_pos else { return };
     let dist = (pos.x - ex).abs().max((pos.y - ey).abs());
     if dist <= 1 {
-        cooldown.0 = 0.5;
-        exit_events.send(ExitLevelEvent);
+        *pending = PendingLevelChange::ExitLevel;
+    }
+}
+
+// ── Level-transition fade ─────────────────────────────────────────────────────
+
+fn spawn_level_fade_overlay(mut commands: Commands) {
+    commands.spawn((
+        LevelFadeOverlay,
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+        Visibility::Hidden,
+        ZIndex(200),
+    ));
+}
+
+/// Animates the full-screen black overlay and fires the deferred level-change
+/// event exactly when the screen is fully black.
+fn drive_level_fade(
+    mut pending: ResMut<PendingLevelChange>,
+    mut fade: ResMut<LevelFadeState>,
+    mut overlay: Query<(&mut Visibility, &mut BackgroundColor), With<LevelFadeOverlay>>,
+    mut transition_events: EventWriter<LevelTransitionEvent>,
+    mut enter_events: EventWriter<EnterBuildingEvent>,
+    mut exit_events: EventWriter<ExitLevelEvent>,
+    mut cooldown: ResMut<EntranceCooldown>,
+    time: Res<Time>,
+) {
+    let Ok((mut vis, mut bg)) = overlay.get_single_mut() else { return };
+
+    // Start fading whenever a transition is pending and we're not already fading.
+    if *pending != PendingLevelChange::None && fade.phase == LevelFadePhase::None {
+        fade.phase = LevelFadePhase::FadingOut;
+        fade.alpha = 0.0;
+    }
+
+    match fade.phase {
+        LevelFadePhase::None => {
+            *vis = Visibility::Hidden;
+        }
+        LevelFadePhase::FadingOut => {
+            *vis = Visibility::Visible;
+            fade.alpha = (fade.alpha + time.delta_secs() * FADE_OUT_SPEED).min(1.0);
+            bg.0 = Color::srgba(0.0, 0.0, 0.0, fade.alpha);
+
+            if fade.alpha >= 1.0 {
+                // Screen is fully black — execute the pending level change now.
+                match pending.clone() {
+                    PendingLevelChange::JailToDistrict => {
+                        transition_events.send(LevelTransitionEvent);
+                    }
+                    PendingLevelChange::EnterBuilding { building_id, kind_code } => {
+                        enter_events.send(EnterBuildingEvent {
+                            building_id,
+                            kind: BuildingKind::from_code(kind_code),
+                        });
+                    }
+                    PendingLevelChange::ExitLevel => {
+                        exit_events.send(ExitLevelEvent);
+                    }
+                    PendingLevelChange::None => {}
+                }
+                *pending = PendingLevelChange::None;
+                // Hold the entrance cooldown over the entire fade-in so the
+                // player can't immediately re-enter through the same door.
+                cooldown.0 = 0.8;
+                fade.phase = LevelFadePhase::FadingIn;
+            }
+        }
+        LevelFadePhase::FadingIn => {
+            *vis = Visibility::Visible;
+            fade.alpha = (fade.alpha - time.delta_secs() * FADE_IN_SPEED).max(0.0);
+            bg.0 = Color::srgba(0.0, 0.0, 0.0, fade.alpha);
+            if fade.alpha <= 0.0 {
+                *vis = Visibility::Hidden;
+                fade.phase = LevelFadePhase::None;
+            }
+        }
     }
 }
 
@@ -362,7 +469,6 @@ fn enter_building_system(
     mut level_cache: ResMut<LevelCache>,
     mut current_level: ResMut<CurrentLevelId>,
     current_map: Res<CurrentMap>,
-    mut cooldown: ResMut<EntranceCooldown>,
     seed: Res<LevelSeed>,
 ) {
     for ev in events.read() {
@@ -461,8 +567,6 @@ fn enter_building_system(
 
         commands.insert_resource(CurrentMap(map));
         current_level.0 = level_id;
-        // Prevent immediate re-exit on the same or next frame.
-        cooldown.0 = 0.5;
     }
 }
 
@@ -482,15 +586,12 @@ fn exit_level_system(
     mut level_stack: ResMut<LevelStack>,
     mut current_level: ResMut<CurrentLevelId>,
     cached_maps: Res<LevelCache>,
-    mut cooldown: ResMut<EntranceCooldown>,
 ) {
     for _ in events.read() {
         // Despawn current building entities and their HP bars.
         for e in level_entities.iter().chain(hp_bars.iter()) {
             commands.entity(e).despawn_recursive();
         }
-        // Prevent stepping back onto the entrance tile immediately.
-        cooldown.0 = 0.5;
 
         // Restore parent level entities.
         for e in &suspended {

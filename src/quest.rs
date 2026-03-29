@@ -5,7 +5,7 @@ use crate::dialogue::DialogueQueue;
 use crate::movement::GridPos;
 use crate::npc::Liberator;
 use crate::player::ActiveEntity;
-use crate::world::{CurrentMap, GameState};
+use crate::world::{CurrentMap, GameState, PendingLevelChange};
 
 #[derive(Resource, PartialEq, Eq, Clone, Copy, Debug, Default)]
 pub enum QuestState {
@@ -75,10 +75,10 @@ fn check_escape(
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos>,
     map: Res<CurrentMap>,
-    mut transition: EventWriter<LevelTransitionEvent>,
     mut state: ResMut<QuestState>,
     mut dialogue: ResMut<DialogueQueue>,
     mut fired: ResMut<TransitionFired>,
+    mut pending: ResMut<PendingLevelChange>,
 ) {
     if *state != QuestState::Escape {
         return;
@@ -91,11 +91,11 @@ fn check_escape(
     // Use proximity (dist <= 1) rather than exact equality so the exit is
     // never missed if the player moves through it quickly.
     let dist = (pos.x - ex).abs().max((pos.y - ey).abs());
-    if dist <= 1 {
+    if dist <= 1 && *pending == PendingLevelChange::None {
         fired.0 = true;
         *state = QuestState::HitJob;
         dialogue.push("System", "You've escaped the jail. Now find the lieutenant.");
-        transition.send(LevelTransitionEvent);
+        *pending = PendingLevelChange::JailToDistrict;
     }
 }
 
