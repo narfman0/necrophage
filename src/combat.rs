@@ -5,7 +5,6 @@ use crate::biomass::{BiomassOrb, BiomassTier, OrbValue};
 use crate::dialogue::DialogueQueue;
 use crate::movement::{Body, GridPos, WALK_ARRIVAL_DIST};
 use crate::player::{ActiveEntity, Player};
-use crate::possession::Corpse;
 use crate::world::{map::TileMap, tile::TileType, CurrentMap, GameRng, GameState, LevelEntity};
 
 // ── Components ───────────────────────────────────────────────────────────────
@@ -396,7 +395,7 @@ fn apply_damage(
 /// then removes the component. Runs after death_system so dead entities are skipped.
 fn knockback_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut GridPos, &Knockback), Without<Corpse>>,
+    mut query: Query<(Entity, &mut GridPos, &Knockback)>,
     map: Res<CurrentMap>,
 ) {
     for (entity, mut pos, kb) in &mut query {
@@ -412,12 +411,10 @@ fn knockback_system(
 
 fn death_system(
     mut commands: Commands,
-    query: Query<(Entity, &Health, &GridPos, Option<&Civilian>), (Without<Player>, Without<Corpse>)>,
+    query: Query<(Entity, &Health, &GridPos, Option<&Civilian>), Without<Player>>,
     mut death_events: EventWriter<EntityDied>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut dialogue: ResMut<DialogueQueue>,
-    mut civilian_killed: Local<bool>,
 ) {
     for (entity, hp, pos, is_civilian) in &query {
         if hp.current <= 0.0 {
@@ -425,15 +422,6 @@ fn death_system(
 
             // Civilians drop a smaller orb (2) as they're non-combatants.
             let orb_value = if is_civilian.is_some() { 2.0 } else { 5.0 };
-
-            // One-shot guilt dialogue when the player first kills a civilian.
-            if is_civilian.is_some() && !*civilian_killed {
-                *civilian_killed = true;
-                dialogue.push(
-                    "Liberator",
-                    "That was a civilian. You didn't have to do that.",
-                );
-            }
 
             // Spawn orb
             commands.spawn((
@@ -448,14 +436,7 @@ fn death_system(
                 Transform::from_xyz(pos.x as f32, 0.3, pos.y as f32),
             ));
 
-            // Mark as corpse for 3 seconds (possessable window) instead of despawning
-            commands
-                .entity(entity)
-                .remove::<Enemy>()
-                .remove::<EnemyAI>()
-                .remove::<PatrolTimer>()
-                .remove::<Attack>()
-                .insert(Corpse { timer: 3.0 });
+            commands.entity(entity).despawn_recursive();
         }
     }
 }

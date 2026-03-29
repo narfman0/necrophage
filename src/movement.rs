@@ -1,8 +1,6 @@
 use bevy::prelude::*;
 
-use crate::camera::CameraTarget;
 use crate::player::ActiveEntity;
-use crate::possession::Controlled;
 use crate::world::{map::TileMap, CurrentMap, GameState};
 use crate::world::tile::tile_to_world;
 
@@ -62,7 +60,6 @@ impl Plugin for MovementPlugin {
                     tick_dash.after(dash_input),
                     apply_movement.after(tick_dash),
                     separate_entities.after(apply_movement),
-                    tab_cycle_entity,
                 )
                 .run_if(in_state(GameState::Playing)),
             )
@@ -227,24 +224,6 @@ fn separate_entities(
     }
 }
 
-fn tab_cycle_entity(
-    keys: Res<ButtonInput<KeyCode>>,
-    controlled: Query<Entity, With<Controlled>>,
-    mut active: ResMut<ActiveEntity>,
-    mut camera_target: ResMut<CameraTarget>,
-) {
-    if !keys.just_pressed(KeyCode::Tab) {
-        return;
-    }
-    let entities: Vec<Entity> = controlled.iter().collect();
-    if entities.len() <= 1 {
-        return;
-    }
-    let current_idx = entities.iter().position(|&e| e == active.0).unwrap_or(0);
-    let next_idx = (current_idx + 1) % entities.len();
-    active.0 = entities[next_idx];
-    camera_target.0 = Some(entities[next_idx]);
-}
 
 #[cfg(test)]
 mod tests {

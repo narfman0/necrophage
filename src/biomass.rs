@@ -2,18 +2,11 @@ use bevy::prelude::*;
 
 use crate::combat::Health;
 use crate::movement::GridPos;
-use crate::player::ActiveEntity;
-use crate::possession::Controlled;
+use crate::player::{ActiveEntity, Player};
 use crate::world::GameState;
 
 #[derive(Resource, Default, Reflect)]
 pub struct Biomass(pub f32);
-
-#[derive(Resource, Default, Reflect)]
-pub struct ControlSlots {
-    pub max: usize,
-    pub used: usize,
-}
 
 #[derive(Resource, PartialEq, Eq, Clone, Copy, Debug, Reflect)]
 pub enum BiomassTier {
@@ -38,15 +31,6 @@ impl BiomassTier {
             31..=75 => BiomassTier::Medium,
             76..=150 => BiomassTier::Large,
             _ => BiomassTier::Apex,
-        }
-    }
-
-    pub fn control_slots(self) -> usize {
-        match self {
-            BiomassTier::Tiny => 1,
-            BiomassTier::Small => 2,
-            BiomassTier::Medium => 3,
-            BiomassTier::Large | BiomassTier::Apex => 4,
         }
     }
 
@@ -98,11 +82,9 @@ pub struct BiomassPlugin;
 impl Plugin for BiomassPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Biomass>()
-            .init_resource::<ControlSlots>()
             .init_resource::<BiomassTier>()
             .register_type::<Biomass>()
             .register_type::<BiomassTier>()
-            .register_type::<ControlSlots>()
             .add_event::<TierChanged>()
             .add_systems(
                 Update,
@@ -138,7 +120,6 @@ fn pickup_orbs(
 fn update_tier(
     biomass: Res<Biomass>,
     mut tier: ResMut<BiomassTier>,
-    mut slots: ResMut<ControlSlots>,
     mut tier_events: EventWriter<TierChanged>,
 ) {
     let new_tier = BiomassTier::from_biomass(biomass.0);
@@ -146,26 +127,21 @@ fn update_tier(
         tier_events.send(TierChanged { old: *tier, new: new_tier });
         *tier = new_tier;
     }
-    slots.max = tier.control_slots();
 }
 
 fn apply_tier_changes(
     mut events: EventReader<TierChanged>,
-    controlled: Query<Entity, With<Controlled>>,
-    mut transforms: Query<&mut Transform>,
-    mut healths: Query<&mut Health>,
+    mut transforms: Query<&mut Transform, With<Player>>,
+    mut healths: Query<&mut Health, With<Player>>,
 ) {
     for ev in events.read() {
-        // Apply scale and HP to ALL controlled entities, not just the active one.
-        for entity in &controlled {
-            if let Ok(mut t) = transforms.get_mut(entity) {
-                t.scale = ev.new.scale();
-            }
-            if let Ok(mut h) = healths.get_mut(entity) {
-                let base = 50.0;
-                h.max = base * ev.new.hp_bonus();
-                h.current = h.current.min(h.max);
-            }
+        for mut t in &mut transforms {
+            t.scale = ev.new.scale();
+        }
+        for mut h in &mut healths {
+            let base = 50.0;
+            h.max = base * ev.new.hp_bonus();
+            h.current = h.current.min(h.max);
         }
     }
 }
@@ -201,15 +177,6 @@ mod tests {
         assert_eq!(BiomassTier::from_biomass(76.0), BiomassTier::Large);
         assert_eq!(BiomassTier::from_biomass(150.0), BiomassTier::Large);
         assert_eq!(BiomassTier::from_biomass(151.0), BiomassTier::Apex);
-    }
-
-    #[test]
-    fn tier_control_slots() {
-        assert_eq!(BiomassTier::Tiny.control_slots(), 1);
-        assert_eq!(BiomassTier::Small.control_slots(), 2);
-        assert_eq!(BiomassTier::Medium.control_slots(), 3);
-        assert_eq!(BiomassTier::Large.control_slots(), 4);
-        assert_eq!(BiomassTier::Apex.control_slots(), 4);
     }
 
     #[test]
