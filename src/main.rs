@@ -4,6 +4,7 @@ pub mod combat;
 pub mod dialogue;
 pub mod ending;
 pub mod levels;
+pub mod minimap;
 pub mod movement;
 pub mod npc;
 pub mod player;
@@ -13,6 +14,7 @@ pub mod world;
 
 use bevy::prelude::*;
 use biomass::{BiomassDisplay, BiomassPlugin};
+use minimap::MinimapPlugin;
 use camera::CameraPlugin;
 use combat::CombatPlugin;
 use dialogue::DialoguePlugin;
@@ -44,6 +46,7 @@ impl Plugin for NecrophagePlugin {
             LevelPlugin,
             EndingPlugin,
             PopulationPlugin,
+            MinimapPlugin,
         ));
     }
 }
