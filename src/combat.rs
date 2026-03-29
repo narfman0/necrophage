@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use rand::Rng;
 
-use crate::biomass::{BiomassOrb, BiomassTier, OrbValue};
+use crate::biomass::BiomassTier;
 use crate::movement::{AttackRecovery, Body, GridPos, WALK_ARRIVAL_DIST};
 use crate::player::{ActiveEntity, Player};
 use crate::world::{map::TileMap, tile::TileType, CurrentMap, GameRng, GameState, LevelEntity, PlayerDied};
@@ -87,6 +87,13 @@ pub struct Invincible;
 pub struct Knockback {
     pub dx: i32,
     pub dy: i32,
+}
+
+/// Marks an entity that has died but not yet been consumed.
+/// The player presses E nearby to consume it, granting biomass and triggering dissolution.
+#[derive(Component)]
+pub struct Corpse {
+    pub biomass_value: f32,
 }
 
 /// Marks an entity that is fading out after death. Despawned when timer reaches zero.
@@ -200,6 +207,8 @@ impl Plugin for CombatPlugin {
                     civilian_flee_system,
                     update_hp_bars,
                     player_death_system,
+                    heal_on_kill,
+                    consume_corpse_system,
                 )
                 .run_if(in_state(GameState::Playing)),
             );
@@ -524,39 +533,60 @@ fn knockback_system(
 
 fn death_system(
     mut commands: Commands,
-    query: Query<(Entity, &Health, &GridPos, Option<&Civilian>, Option<&HpBar>), (Without<Player>, Without<Dying>)>,
+    mut query: Query<(Entity, &Health, &GridPos, Option<&Civilian>, Option<&HpBar>, &mut Transform), (Without<Player>, Without<Dying>, Without<Corpse>)>,
     mut death_events: EventWriter<EntityDied>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    for (entity, hp, pos, is_civilian, hp_bar) in &query {
+    for (entity, hp, pos, is_civilian, hp_bar, mut transform) in &mut query {
         if hp.current <= 0.0 {
             death_events.send(EntityDied { entity, pos: *pos });
 
-            // Remove the HP bar immediately — it's a separate top-level entity.
+            // Remove the HP bar immediately.
             if let Some(HpBar(bar_entity)) = hp_bar {
                 commands.entity(*bar_entity).despawn_recursive();
             }
 
-            // Civilians drop a smaller orb (2) as they're non-combatants.
-            let orb_value = if is_civilian.is_some() { 2.0 } else { 5.0 };
+            // Lay the corpse flat on the ground.
+            transform.rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+            transform.translation.y = 0.25;
 
-            // Spawn orb
-            commands.spawn((
-                BiomassOrb,
-                OrbValue(orb_value),
-                *pos,
-                Mesh3d(meshes.add(Sphere::new(0.25))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(1.0, 0.85, 0.0),
-                    ..default()
-                })),
-                Transform::from_xyz(pos.x as f32, 0.3, pos.y as f32),
-            ));
-
-            // Begin dissolve animation instead of instant despawn.
-            commands.entity(entity).insert(Dying { timer: DISSOLVE_DURATION });
+            let biomass_value: f32 = if is_civilian.is_some() { 2.0 } else { 5.0 };
+            commands.entity(entity).insert(Corpse { biomass_value });
         }
+    }
+}
+
+/// Interact range (Chebyshev tiles) to consume a corpse.
+const CONSUME_RANGE: i32 = 2;
+
+fn consume_corpse_system(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    active: Res<ActiveEntity>,
+    player_pos: Query<&GridPos, With<Player>>,
+    corpses: Query<(Entity, &GridPos, &Corpse)>,
+    mut biomass: ResMut<crate::biomass::Biomass>,
+) {
+    if !keys.just_pressed(KeyCode::KeyE) {
+        return;
+    }
+    let Ok(player_gp) = player_pos.get(active.0) else { return };
+
+    // Find the nearest corpse within range.
+    let mut best: Option<(Entity, i32, f32)> = None;
+    for (entity, gp, corpse) in &corpses {
+        let dist = (gp.x - player_gp.x).abs().max((gp.y - player_gp.y).abs());
+        if dist <= CONSUME_RANGE {
+            if best.is_none() || dist < best.unwrap().1 {
+                best = Some((entity, dist, corpse.biomass_value));
+            }
+        }
+    }
+
+    if let Some((entity, _, value)) = best {
+        biomass.0 += value;
+        commands.entity(entity)
+            .remove::<Corpse>()
+            .insert(Dying { timer: DISSOLVE_DURATION });
     }
 }
 
@@ -688,6 +718,23 @@ fn update_hp_bars(
                 enemy_transform.translation + Vec3::new(0.0, 1.2, 0.0);
             bar_transform.scale = Vec3::new(ratio, 1.0, 1.0);
         }
+    }
+}
+
+/// Amount of HP restored per enemy kill.
+const KILL_HEAL: f32 = 5.0;
+
+fn heal_on_kill(
+    mut events: EventReader<EntityDied>,
+    active: Res<ActiveEntity>,
+    mut health: Query<&mut Health, With<Player>>,
+) {
+    let kill_count = events.read().count();
+    if kill_count == 0 {
+        return;
+    }
+    if let Ok(mut hp) = health.get_mut(active.0) {
+        hp.current = (hp.current + KILL_HEAL * kill_count as f32).min(hp.max);
     }
 }
 
