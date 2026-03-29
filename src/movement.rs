@@ -219,7 +219,7 @@ fn apply_movement(
 /// Move non-player entities (enemies, NPCs) toward their GridPos target at constant speed.
 pub const WALK_ARRIVAL_DIST: f32 = 0.08;
 fn lerp_transforms(
-    mut query: Query<(&GridPos, &mut Transform), Without<MoveDir>>,
+    mut query: Query<(&GridPos, &mut Transform), (Without<MoveDir>, Without<crate::world::Suspended>)>,
     time: Res<Time>,
 ) {
     let step = WALK_SPEED * time.delta_secs();

@@ -814,7 +814,10 @@ fn civilian_flee_system(
 }
 
 fn update_hp_bars(
-    enemies: Query<(&Health, &Transform, &HpBar), Without<Dying>>,
+    enemies: Query<
+        (&Health, &Transform, &HpBar),
+        (Without<Dying>, Without<Suspended>, Or<(Changed<Transform>, Changed<Health>)>),
+    >,
     mut bar_query: Query<(&mut Transform, &mut Visibility), (With<HpBarRoot>, Without<HpBar>)>,
 ) {
     for (hp, enemy_transform, HpBar(bar_entity)) in &enemies {

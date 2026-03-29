@@ -13,9 +13,20 @@ serde_json = "1"
 default = ["debug"]
 debug = ["dep:bevy-inspector-egui", "bevy/bevy_remote"]
 headless = []
+# Enable Chrome trace output: run with --no-default-features --features profile,
+# then open the generated trace_event.json in chrome://tracing or Perfetto.
+profile = ["bevy/trace", "dep:tracing-chrome", "dep:tracing-subscriber"]
 
 [dependencies.bevy-inspector-egui]
 version = "0.28"
+optional = true
+
+[dependencies.tracing-chrome]
+version = "0.7"
+optional = true
+
+[dependencies.tracing-subscriber]
+version = "0.3"
 optional = true
 
 [profile.dev.package."*"]

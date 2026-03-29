@@ -58,6 +58,21 @@ impl Plugin for NecrophagePlugin {
 use world::WorldPlugin;
 
 pub fn run() {
+    // When built with --features profile, install a Chrome-tracing subscriber
+    // so every Bevy system appears as a named span in the output.
+    // Produces `trace_event.json` in the working directory; open in
+    // chrome://tracing or https://ui.perfetto.dev
+    #[cfg(feature = "profile")]
+    let _chrome_guard = {
+        use tracing_subscriber::prelude::*;
+        let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+            .file("trace_event.json")
+            .build();
+        // Bevy sets up its own subscriber; layer on top of it instead.
+        tracing_subscriber::registry().with(chrome_layer).init();
+        guard
+    };
+
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
@@ -214,7 +229,7 @@ pub mod hud {
 
     pub fn update_player_hp_hud(
         active: Res<ActiveEntity>,
-        health_query: Query<&Health>,
+        health_query: Query<&Health, Changed<Health>>,
         mut display: Query<(&mut Text, &mut TextColor), With<PlayerHpDisplay>>,
     ) {
         let Ok(hp) = health_query.get(active.0) else {
