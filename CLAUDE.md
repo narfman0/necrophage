@@ -7,76 +7,64 @@ Isometric action RPG built with Rust and Bevy 0.15. Orthographic 3D camera at a 
 ## Build & Run
 
 ```bash
-# Check compilation (all crates)
+# Check compilation
 cargo check
 
 # Run game (debug tools included by default)
-cargo run -p necrophage
+cargo run
 
 # Run (release — debug tools automatically stripped)
-cargo run -p necrophage --release
+cargo run --release
 
-# Run tests (headless, no display needed)
-cargo test -p necrophage-core
+# Run tests
+cargo test
 ```
 
 ## Bevy Version
 
 Bevy **0.15**. Always use 0.15 APIs. When in doubt, check the [Bevy 0.15 docs](https://docs.rs/bevy/0.15).
 
-## Workspace Structure
+## Project Structure
 
-This is a Cargo workspace with two crates:
+Single Cargo package. All source lives under `src/`:
 
 ```
-Cargo.toml                        # workspace root
-crates/
-  necrophage-core/                # library — all gameplay logic
-    src/
-      lib.rs                      # NecrophageCorePlugin, pub mod declarations
-      biomass.rs                  # Biomass resource, orb pickup, growth tiers
-      camera.rs                   # Isometric camera plugin, follow system
-      combat.rs                   # Health, Attack, enemy AI, death, boss AI
-      dialogue.rs                 # Dialogue UI overlay
-      ending.rs                   # World destruction condition and sequence
-      movement.rs                 # WASD input, tile collision, transform sync
-      npc.rs                      # NPC component, liberator scripted AI
-      player.rs                   # Player entity, ActiveEntity resource
-      possession.rs               # Infection, Controlled component, ControlSlots
-      quest.rs                    # Quest steps, advancement conditions
-      world/
-        mod.rs                    # WorldPlugin, TileMap resource
-        tile.rs                   # TileType enum, mesh spawning
-        map.rs                    # Map dimensions, tile lookup
-      levels/
-        mod.rs                    # LevelPlugin, Level state enum
-        generator.rs              # LevelGenerator trait, LevelParams, LevelSeed
-        jail.rs                   # Jail procedural generator
-        district.rs               # District procedural generator
-  necrophage-gui/                 # binary — rendering, input, debug tooling
-    src/
-      main.rs                     # App setup, DefaultPlugins, plugin registration
-      debug/
-        mod.rs                    # DebugPlugin (feature-gated)
-        console.rs                # In-game command console (tilde key)
-        commands.rs               # Command dispatch, DebugCommand event
-        inspector.rs              # bevy-inspector-egui world inspector (F2)
-        remote.rs                 # BRP remote injection API
+Cargo.toml
+src/
+  main.rs                     # App setup, DefaultPlugins, plugin registration
+  biomass.rs                  # Biomass resource, orb pickup, growth tiers
+  camera.rs                   # Isometric camera plugin, follow system
+  combat.rs                   # Health, Attack, enemy AI, death, boss AI
+  dialogue.rs                 # Dialogue UI overlay
+  ending.rs                   # World destruction condition and sequence
+  movement.rs                 # WASD input, tile collision, transform sync
+  npc.rs                      # NPC component, liberator scripted AI
+  player.rs                   # Player entity, ActiveEntity resource
+  possession.rs               # Infection, Controlled component, ControlSlots
+  quest.rs                    # Quest steps, advancement conditions
+  world/
+    mod.rs                    # WorldPlugin, TileMap resource
+    tile.rs                   # TileType enum, mesh spawning
+    map.rs                    # Map dimensions, tile lookup
+  levels/
+    mod.rs                    # LevelPlugin, Level state enum
+    generator.rs              # LevelGenerator trait, LevelParams, LevelSeed
+    jail.rs                   # Jail procedural generator
+    district.rs               # District procedural generator
+  debug/
+    mod.rs                    # DebugPlugin (feature-gated)
+    console.rs                # In-game command console (tilde key)
+    commands.rs               # Command dispatch, DebugCommand event
+    inspector.rs              # bevy-inspector-egui world inspector (F2)
+    remote.rs                 # BRP remote injection API
 ```
-
-## Crate Boundaries
-
-- `necrophage-core` depends on `bevy` and `rand` only — no window/audio/renderer plugins
-- `necrophage-gui` depends on `necrophage-core` + full `bevy` + debug crates
-- All gameplay logic lives in core; the GUI crate is a thin shell
-- Tests in core run headlessly: `cargo test -p necrophage-core`
 
 ## Debug Features
 
 Debug tooling is the default in dev builds and automatically stripped from release builds.
 
-- `cargo run -p necrophage` — debug tools **on** (default feature, `debug_assertions = true`)
-- `cargo run -p necrophage --release` — debug tools **off** (`debug_assertions = false` strips the plugin at compile time)
+- `cargo run` — debug tools **on** (default feature, `debug_assertions = true`)
+- `cargo run --release` — debug tools **off** (`debug_assertions = false` strips the plugin at compile time)
 
 ### In-Game Console (tilde `` ` ``)
 
@@ -127,7 +115,6 @@ curl -X POST http://localhost:15702 \
 
 - **Write unit tests for all pure logic.**
 - **Check compilation before considering a task done.** Always run `cargo check` (and `cargo check --features debug`) after changes. Zero errors, zero warnings is the bar.
-- **Keep gameplay logic in `necrophage-core`.**
 - **Reuse existing helpers.**
 - **Use `#[derive(Reflect)]` on new components and resources** so they show up in the ECS inspector automatically.
 - **Seed all RNG from `LevelSeed`.** Never use `rand::thread_rng()` in gameplay systems — store a `Resource<StdRng>` seeded from `LevelSeed` so results are reproducible.
@@ -138,7 +125,6 @@ curl -X POST http://localhost:15702 \
 
 - **Don't use `cd` in bash commands.**
 - **Don't use `rand::thread_rng()` in systems.**
-- **Don't put rendering code in `necrophage-core`.**
 - **Don't leave dead code or unused imports.**
 
 ## Camera
