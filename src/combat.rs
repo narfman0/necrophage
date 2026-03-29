@@ -377,7 +377,7 @@ fn enemy_chase_system(
         }
         if let Some(ref mut path) = path_opt {
             path.recalc_timer -= dt;
-            if path.steps.is_empty() || path.recalc_timer <= 0.0 {
+            if path.recalc_timer <= 0.0 {
                 path.steps = map.0.astar((pos.x, pos.y), (target.x, target.y)).into();
                 path.recalc_timer = 0.5;
             }
@@ -583,7 +583,7 @@ fn player_attack_system(
     }
 }
 
-fn apply_damage(
+pub fn apply_damage(
     mut commands: Commands,
     mut events: EventReader<DamageEvent>,
     mut health_query: Query<&mut Health>,
@@ -631,7 +631,7 @@ fn knockback_system(
     }
 }
 
-fn death_system(
+pub fn death_system(
     mut commands: Commands,
     mut query: Query<(Entity, &Health, &GridPos, Option<&Civilian>, Option<&HpBar>, &mut Transform, Option<&mut MoveDir>), (Without<Player>, Without<Dying>, Without<Corpse>)>,
     mut death_events: EventWriter<EntityDied>,

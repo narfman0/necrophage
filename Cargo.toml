@@ -12,6 +12,7 @@ serde_json = "1"
 [features]
 default = ["debug"]
 debug = ["dep:bevy-inspector-egui", "bevy/bevy_remote"]
+headless = []
 
 [dependencies.bevy-inspector-egui]
 version = "0.28"
