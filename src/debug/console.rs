@@ -115,6 +115,9 @@ fn handle_console_input(
                     }
                 }
             }
+            Key::Space => {
+                state.input.push(' ');
+            }
             Key::Backspace => {
                 state.input.pop();
             }
