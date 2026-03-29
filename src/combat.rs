@@ -718,7 +718,7 @@ fn boss_ai_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     active_pos: Query<&Transform, Without<MobBoss>>,
-    mut bosses: Query<(&Transform, &GridPos, &mut BossAI, &mut Attack, &Health), With<MobBoss>>,
+    mut bosses: Query<(&Transform, &GridPos, &mut BossAI, &mut Attack, &Health), (With<MobBoss>, Without<Suspended>)>,
     active: Res<ActiveEntity>,
     mut damage_events: EventWriter<DamageEvent>,
     time: Res<Time>,
