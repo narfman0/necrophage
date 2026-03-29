@@ -3209,17 +3209,9 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy-inspector-egui",
- "necrophage-core",
+ "rand",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "necrophage-core"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "rand",
 ]
 
 [[package]]

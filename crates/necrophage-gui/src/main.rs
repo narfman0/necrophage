@@ -1,8 +1,50 @@
+pub mod biomass;
+pub mod camera;
+pub mod combat;
+pub mod dialogue;
+pub mod ending;
+pub mod levels;
+pub mod movement;
+pub mod npc;
+pub mod player;
+pub mod possession;
+pub mod quest;
+pub mod world;
+
 use bevy::prelude::*;
-use necrophage_core::NecrophageCorePlugin;
-use necrophage_core::biomass::{BiomassDisplay, ControlSlots};
-use necrophage_core::possession::{Controlled, InfectProgress};
-use necrophage_core::quest::QuestState;
+use biomass::{BiomassDisplay, BiomassPlugin, ControlSlots};
+use camera::CameraPlugin;
+use combat::CombatPlugin;
+use dialogue::DialoguePlugin;
+use ending::EndingPlugin;
+use levels::LevelPlugin;
+use movement::MovementPlugin;
+use npc::NpcPlugin;
+use player::PlayerPlugin;
+use possession::{Controlled, InfectProgress, PossessionPlugin};
+use quest::{QuestPlugin, QuestState};
+use world::WorldPlugin;
+
+struct NecrophagePlugin;
+
+impl Plugin for NecrophagePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins((
+            WorldPlugin,
+            CameraPlugin,
+            PlayerPlugin,
+            MovementPlugin,
+            BiomassPlugin,
+            CombatPlugin,
+            PossessionPlugin,
+            DialoguePlugin,
+            NpcPlugin,
+            QuestPlugin,
+            LevelPlugin,
+            EndingPlugin,
+        ));
+    }
+}
 
 fn main() {
     let mut app = App::new();
@@ -13,7 +55,7 @@ fn main() {
         }),
         ..default()
     }))
-    .add_plugins(NecrophageCorePlugin)
+    .add_plugins(NecrophagePlugin)
     .add_systems(
         Startup,
         (spawn_biomass_hud, spawn_control_slots_hud, spawn_quest_hud, spawn_infect_bar),

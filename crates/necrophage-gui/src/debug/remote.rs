@@ -12,12 +12,12 @@ use bevy::prelude::*;
 use bevy::remote::{BrpError, BrpResult, RemotePlugin, http::RemoteHttpPlugin};
 use serde_json::{json, Value};
 
-use necrophage_core::biomass::{Biomass, BiomassTier};
-use necrophage_core::combat::{Civilian, Enemy, Health, MobBoss};
-use necrophage_core::movement::GridPos;
-use necrophage_core::npc::Liberator;
-use necrophage_core::player::{ActiveEntity, Player};
-use necrophage_core::quest::QuestState;
+use crate::biomass::{Biomass, BiomassTier};
+use crate::combat::{Civilian, Enemy, Health, MobBoss};
+use crate::movement::GridPos;
+use crate::npc::Liberator;
+use crate::player::{ActiveEntity, Player};
+use crate::quest::QuestState;
 
 use super::commands::DebugCommand;
 

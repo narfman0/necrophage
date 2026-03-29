@@ -1,9 +1,9 @@
 use bevy::prelude::*;
-use necrophage_core::biomass::{Biomass, BiomassTier};
-use necrophage_core::combat::{Enemy, Health};
-use necrophage_core::movement::GridPos;
-use necrophage_core::player::ActiveEntity;
-use necrophage_core::quest::QuestState;
+use crate::biomass::{Biomass, BiomassTier};
+use crate::combat::{Enemy, Health};
+use crate::movement::GridPos;
+use crate::player::ActiveEntity;
+use crate::quest::QuestState;
 
 /// A command to be executed via the debug console or remote API.
 #[derive(Event, Clone)]

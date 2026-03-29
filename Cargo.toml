@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "crates/necrophage-core",
     "crates/necrophage-gui",
 ]
 resolver = "2"
