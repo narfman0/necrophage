@@ -18,7 +18,7 @@ use crate::player::{ActiveEntity, Player};
 use crate::quest::LevelTransitionEvent;
 use crate::world::{CurrentMap, GameRng, LevelEntity};
 use crate::world::map::TileMap;
-use crate::world::tile::{spawn_tile, tile_to_world};
+use crate::world::tile::{spawn_tile, tile_to_world, TileAssets};
 use building::{BuildingGenerator};
 use district::DistrictGenerator;
 use generator::{BuildingKind, LevelGenerator, SpawnInfo};
@@ -120,6 +120,7 @@ fn generate_jail(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    tile_assets: Res<TileAssets>,
     seed: Res<LevelSeed>,
     mut dialogue: ResMut<DialogueQueue>,
 ) {
@@ -130,7 +131,7 @@ fn generate_jail(
     let (map, info) = generator.generate(&mut rng);
 
     for (x, y, tile) in map.iter_tiles() {
-        let e = spawn_tile(&mut commands, &mut meshes, &mut materials, x, y, tile);
+        let e = spawn_tile(&mut commands, &tile_assets, x, y, tile);
         commands.entity(e).insert(LevelEntity);
     }
 
@@ -169,6 +170,7 @@ fn handle_transition(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    tile_assets: Res<TileAssets>,
     mut events: EventReader<LevelTransitionEvent>,
     level_entities: Query<Entity, With<LevelEntity>>,
     hp_bars: Query<Entity, With<HpBarRoot>>,
@@ -194,7 +196,7 @@ fn handle_transition(
         let (map, info) = district_gen.generate(&mut rng);
 
         for (x, y, tile) in map.iter_tiles() {
-            let e = spawn_tile(&mut commands, &mut meshes, &mut materials, x, y, tile);
+            let e = spawn_tile(&mut commands, &tile_assets, x, y, tile);
             commands.entity(e).insert(LevelEntity);
         }
 
@@ -310,6 +312,7 @@ fn enter_building_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    tile_assets: Res<TileAssets>,
     mut events: EventReader<EnterBuildingEvent>,
     level_entities: Query<Entity, With<LevelEntity>>,
     mut player_query: Query<(&mut GridPos, &mut Transform), With<Player>>,
@@ -372,7 +375,7 @@ fn enter_building_system(
 
         // Spawn building tiles.
         for (x, y, tile) in map.iter_tiles() {
-            let e = spawn_tile(&mut commands, &mut meshes, &mut materials, x, y, tile);
+            let e = spawn_tile(&mut commands, &tile_assets, x, y, tile);
             commands.entity(e).insert(LevelEntity);
         }
 

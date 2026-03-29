@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use map::TileMap;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use tile::TileType;
+use tile::{TileAssets, TileType};
 
 #[derive(Resource)]
 pub struct CurrentMap(pub TileMap);
@@ -41,6 +41,7 @@ impl Plugin for WorldPlugin {
         // Insert an empty map resource; LevelPlugin will populate it on Startup.
         app.insert_resource(CurrentMap(TileMap::new(1, 1, TileType::Wall)))
             .init_resource::<GameRng>()
+            .init_resource::<TileAssets>()
             .init_state::<GameState>();
     }
 }

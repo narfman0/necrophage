@@ -1,3 +1,4 @@
+use bevy::pbr::DirectionalLight;
 use bevy::prelude::*;
 use crate::biomass::{Biomass, BiomassTier};
 use crate::combat::{Enemy, Health};
@@ -35,6 +36,7 @@ fn dispatch_commands(
     mut transforms: Query<&mut Transform>,
     enemies: Query<Entity, With<Enemy>>,
     mut quest: Option<ResMut<QuestState>>,
+    mut dir_lights: Query<&mut DirectionalLight>,
 ) {
     for cmd in cmd_events.read() {
         let output = execute_command(
@@ -48,6 +50,7 @@ fn dispatch_commands(
             &mut transforms,
             &enemies,
             &mut quest,
+            &mut dir_lights,
         );
         out_events.send(DebugCommandOutput(output));
     }
@@ -64,6 +67,7 @@ fn execute_command(
     transforms: &mut Query<&mut Transform>,
     enemies: &Query<Entity, With<Enemy>>,
     quest: &mut Option<ResMut<QuestState>>,
+    dir_lights: &mut Query<&mut DirectionalLight>,
 ) -> String {
     let parts: Vec<&str> = input.trim().split_whitespace().collect();
     if parts.is_empty() {
@@ -145,6 +149,19 @@ fn execute_command(
                 "No QuestState resource found".into()
             }
         }
+        ["shadows", state @ ("on" | "off")] => {
+            let enable = *state == "on";
+            let mut count = 0;
+            for mut light in dir_lights.iter_mut() {
+                light.shadows_enabled = enable;
+                count += 1;
+            }
+            if count > 0 {
+                format!("Directional shadows {}", state)
+            } else {
+                "No directional lights found".into()
+            }
+        }
         ["help"] => concat!(
             "Commands:\n",
             "  give biomass <amount>\n",
@@ -155,6 +172,7 @@ fn execute_command(
             "  print biomass\n",
             "  print entities\n",
             "  quest advance\n",
+            "  shadows <on|off>\n",
             "  help"
         ).into(),
         _ => format!("Unknown command: '{}'. Type 'help' for list.", input.trim()),
