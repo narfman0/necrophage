@@ -782,7 +782,7 @@ fn civilian_flee_system(
     active: Res<ActiveEntity>,
     mut params: ParamSet<(
         Query<&GridPos>,
-        Query<(&mut GridPos, &mut PatrolTimer), (With<Civilian>, Without<Player>)>,
+        Query<(&mut GridPos, &mut PatrolTimer), (With<Civilian>, Without<Player>, Without<Suspended>)>,
     )>,
     map: Res<CurrentMap>,
     time: Res<Time>,

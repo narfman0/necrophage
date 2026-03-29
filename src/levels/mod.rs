@@ -236,16 +236,17 @@ fn generate_world(
 
 // ── Zone suspension ───────────────────────────────────────────────────────────
 
-/// Suspends AI on enemies far from the player and wakes them when they come
-/// within range again. Uses Chebyshev (tile-grid) distance.
+/// Suspends AI on enemies and civilians far from the player and wakes them when
+/// they come within range again. Uses Chebyshev (tile-grid) distance.
 fn zone_suspend_system(
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos, With<Player>>,
-    entities: Query<(Entity, &GridPos, Option<&Suspended>), With<Enemy>>,
+    enemies: Query<(Entity, &GridPos, Option<&Suspended>), With<Enemy>>,
+    civilians: Query<(Entity, &GridPos, Option<&Suspended>), (With<Civilian>, Without<Enemy>)>,
     mut commands: Commands,
 ) {
     let Ok(ppos) = player_pos.get(active.0) else { return };
-    for (entity, pos, suspended) in &entities {
+    for (entity, pos, suspended) in enemies.iter().chain(civilians.iter()) {
         let dist = (pos.x - ppos.x).abs().max((pos.y - ppos.y).abs());
         if dist > SUSPEND_DIST && suspended.is_none() {
             commands.entity(entity).insert(Suspended);
