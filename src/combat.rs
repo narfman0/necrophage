@@ -68,6 +68,14 @@ pub struct Knockback {
     pub dy: i32,
 }
 
+/// Marks an entity that is fading out after death. Despawned when timer reaches zero.
+#[derive(Component)]
+pub struct Dying {
+    pub timer: f32,
+}
+
+const DISSOLVE_DURATION: f32 = 0.6;
+
 const LOST_TIMEOUT: f32 = 2.0;
 
 /// Melee attack range in world units (XZ plane circle distance).
@@ -156,6 +164,7 @@ impl Plugin for CombatPlugin {
                     player_attack_system,
                     apply_damage,
                     death_system.after(apply_damage),
+                    dissolve_system.after(death_system),
                     knockback_system.after(death_system),
                     civilian_flee_system,
                     update_hp_bars,
@@ -176,7 +185,7 @@ fn tick_attack_cooldowns(mut query: Query<&mut Attack>, time: Res<Time>) {
 }
 
 fn enemy_sight_system(
-    mut enemies: Query<(&GridPos, &mut EnemyAI, &SightRange, &mut LostTimer), With<Enemy>>,
+    mut enemies: Query<(&GridPos, &mut EnemyAI, &SightRange, &mut LostTimer), (With<Enemy>, Without<Dying>)>,
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos>,
     map: Res<CurrentMap>,
@@ -203,7 +212,7 @@ const ALERT_RADIUS: i32 = 6;
 /// Triggered when an enemy first spots the player or when damage is dealt.
 fn enemy_alert_system(
     mut events: EventReader<AlertEvent>,
-    mut enemies: Query<(&GridPos, &mut EnemyAI, &mut LostTimer), With<Enemy>>,
+    mut enemies: Query<(&GridPos, &mut EnemyAI, &mut LostTimer), (With<Enemy>, Without<Dying>)>,
 ) {
     for alert in events.read() {
         for (pos, mut ai, mut lost) in &mut enemies {
@@ -222,7 +231,7 @@ fn enemy_alert_system(
 /// When the timer expires the enemy gives up and resumes patrol.
 fn enemy_lost_system(
     time: Res<Time>,
-    mut enemies: Query<(&mut EnemyAI, &mut LostTimer), With<Enemy>>,
+    mut enemies: Query<(&mut EnemyAI, &mut LostTimer), (With<Enemy>, Without<Dying>)>,
 ) {
     for (mut ai, mut timer) in &mut enemies {
         if *ai != EnemyAI::Chase {
@@ -237,7 +246,7 @@ fn enemy_lost_system(
 }
 
 fn enemy_patrol_system(
-    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform), With<Enemy>>,
+    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform), (With<Enemy>, Without<Dying>)>,
     map: Res<CurrentMap>,
     time: Res<Time>,
     mut rng: ResMut<GameRng>,
@@ -270,7 +279,7 @@ fn enemy_patrol_system(
 }
 
 fn enemy_chase_system(
-    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform), With<Enemy>>,
+    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform), (With<Enemy>, Without<Dying>)>,
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos, Without<Enemy>>,
     map: Res<CurrentMap>,
@@ -301,7 +310,7 @@ fn enemy_chase_system(
 }
 
 fn enemy_attack_system(
-    mut enemies: Query<(&Transform, &GridPos, &mut Attack, &EnemyAI), With<Enemy>>,
+    mut enemies: Query<(&Transform, &GridPos, &mut Attack, &EnemyAI), (With<Enemy>, Without<Dying>)>,
     active: Res<ActiveEntity>,
     player_tf: Query<&Transform>,
     mut damage_events: EventWriter<DamageEvent>,
@@ -405,14 +414,19 @@ fn knockback_system(
 
 fn death_system(
     mut commands: Commands,
-    query: Query<(Entity, &Health, &GridPos, Option<&Civilian>), Without<Player>>,
+    query: Query<(Entity, &Health, &GridPos, Option<&Civilian>, Option<&HpBar>), (Without<Player>, Without<Dying>)>,
     mut death_events: EventWriter<EntityDied>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    for (entity, hp, pos, is_civilian) in &query {
+    for (entity, hp, pos, is_civilian, hp_bar) in &query {
         if hp.current <= 0.0 {
             death_events.send(EntityDied { entity, pos: *pos });
+
+            // Remove the HP bar immediately — it's a separate top-level entity.
+            if let Some(HpBar(bar_entity)) = hp_bar {
+                commands.entity(*bar_entity).despawn_recursive();
+            }
 
             // Civilians drop a smaller orb (2) as they're non-combatants.
             let orb_value = if is_civilian.is_some() { 2.0 } else { 5.0 };
@@ -430,6 +444,27 @@ fn death_system(
                 Transform::from_xyz(pos.x as f32, 0.3, pos.y as f32),
             ));
 
+            // Begin dissolve animation instead of instant despawn.
+            commands.entity(entity).insert(Dying { timer: DISSOLVE_DURATION });
+        }
+    }
+}
+
+fn dissolve_system(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut Dying, &MeshMaterial3d<StandardMaterial>)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    time: Res<Time>,
+) {
+    for (entity, mut dying, mat_handle) in &mut query {
+        dying.timer -= time.delta_secs();
+        let alpha = (dying.timer / DISSOLVE_DURATION).clamp(0.0, 1.0);
+        if let Some(mat) = materials.get_mut(&mat_handle.0) {
+            mat.alpha_mode = AlphaMode::Blend;
+            let c = mat.base_color.to_srgba();
+            mat.base_color = Color::srgba(c.red, c.green, c.blue, alpha);
+        }
+        if dying.timer <= 0.0 {
             commands.entity(entity).despawn_recursive();
         }
     }
@@ -536,7 +571,7 @@ fn civilian_flee_system(
 }
 
 fn update_hp_bars(
-    enemies: Query<(&Health, &Transform, &HpBar)>,
+    enemies: Query<(&Health, &Transform, &HpBar), Without<Dying>>,
     mut bar_transforms: Query<&mut Transform, (With<HpBarRoot>, Without<HpBar>)>,
 ) {
     for (hp, enemy_transform, HpBar(bar_entity)) in &enemies {

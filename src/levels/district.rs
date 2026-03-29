@@ -106,8 +106,13 @@ impl LevelGenerator for DistrictGenerator {
         let exit_y = h - 4;
         map.set(exit_x, exit_y, TileType::Exit);
         map.exit_pos = Some((exit_x, exit_y));
+        // Horizontal path connecting exit column to the right vertical street
         for x in w - 12..=exit_x {
             map.set(x, h - 10, TileType::Floor);
+        }
+        // Vertical path from horizontal path down to exit (gap was 6 tiles of wall)
+        for gy in h - 10..exit_y {
+            map.set(exit_x, gy, TileType::Floor);
         }
 
         let mut info = SpawnInfo::new((entry_x, h - 5));

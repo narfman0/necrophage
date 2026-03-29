@@ -14,10 +14,10 @@ impl LevelGenerator for JailGenerator {
         let h = 40i32;
         let mut map = TileMap::new(w, h, TileType::Wall);
 
-        // Player cell: top-left area
-        carve_room(&mut map, 2, 2, 10, 8);
-        // NPC cell: directly below player cell
-        carve_room(&mut map, 2, 12, 10, 18);
+        // Player cell: top-left area (extended to y=9 so it's adjacent to the door at y=10)
+        carve_room(&mut map, 2, 2, 10, 9);
+        // NPC cell: directly below player cell (extended to y=11 so it's adjacent to the door at y=10)
+        carve_room(&mut map, 2, 11, 10, 18);
         // Corridor connecting cells to exit (4 tiles wide)
         for y in 20..h - 1 {
             for x in 6..10 {
