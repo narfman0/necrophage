@@ -22,8 +22,10 @@ use movement::MovementPlugin;
 use npc::NpcPlugin;
 use player::PlayerPlugin;
 use population::PopulationPlugin;
+use combat::Health;
+use player::ActiveEntity;
 use quest::{QuestPlugin, QuestState};
-use world::{PopulationDensity, WorldPlugin};
+use world::{GameState, PlayerDied, PopulationDensity, WorldPlugin};
 
 struct NecrophagePlugin;
 
@@ -58,11 +60,11 @@ fn main() {
     .add_plugins(NecrophagePlugin)
     .add_systems(
         Startup,
-        (spawn_biomass_hud, spawn_quest_hud, spawn_density_hud),
+        (spawn_biomass_hud, spawn_quest_hud, spawn_density_hud, spawn_player_hp_hud, spawn_you_died_overlay),
     )
     .add_systems(
         Update,
-        (update_quest_hud, update_density_hud),
+        (update_quest_hud, update_density_hud, update_player_hp_hud, drive_you_died_overlay),
     );
 
     #[cfg(all(feature = "debug", debug_assertions))]
@@ -78,6 +80,12 @@ struct QuestDisplay;
 
 #[derive(Component)]
 struct DensityDisplay;
+
+#[derive(Component)]
+struct PlayerHpDisplay;
+
+#[derive(Component)]
+struct YouDiedOverlay;
 
 // ── Spawn ─────────────────────────────────────────────────────────────────────
 
@@ -146,6 +154,91 @@ fn update_density_hud(
     }
     for mut text in &mut query {
         text.0 = format!("Population: {} / {}", density.current, density.max);
+    }
+}
+
+fn spawn_player_hp_hud(mut commands: Commands) {
+    commands.spawn((
+        Text::new("HP: 50 / 50"),
+        TextFont {
+            font_size: 18.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.2, 1.0, 0.3)),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(52.0),
+            left: Val::Px(8.0),
+            ..default()
+        },
+        PlayerHpDisplay,
+    ));
+}
+
+fn update_player_hp_hud(
+    active: Res<ActiveEntity>,
+    health_query: Query<&Health>,
+    mut display: Query<(&mut Text, &mut TextColor), With<PlayerHpDisplay>>,
+) {
+    let Ok(hp) = health_query.get(active.0) else { return };
+    let ratio = hp.current / hp.max;
+    let color = if ratio > 0.5 {
+        Color::srgb(0.2, 1.0, 0.3)
+    } else if ratio > 0.25 {
+        Color::srgb(1.0, 0.8, 0.1)
+    } else {
+        Color::srgb(1.0, 0.2, 0.1)
+    };
+    for (mut text, mut tc) in &mut display {
+        text.0 = format!("HP: {} / {}", hp.current.ceil() as i32, hp.max as i32);
+        tc.0 = color;
+    }
+}
+
+fn spawn_you_died_overlay(mut commands: Commands) {
+    commands
+        .spawn((
+            YouDiedOverlay,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
+            Visibility::Hidden,
+            ZIndex(100),
+        ))
+        .with_children(|p| {
+            p.spawn((
+                Text::new("YOU DIED"),
+                TextFont { font_size: 64.0, ..default() },
+                TextColor(Color::srgb(0.9, 0.1, 0.1)),
+            ));
+            p.spawn((
+                Text::new("Press any key to exit"),
+                TextFont { font_size: 22.0, ..default() },
+                TextColor(Color::srgb(0.8, 0.8, 0.8)),
+            ));
+        });
+}
+
+fn drive_you_died_overlay(
+    player_died: Res<PlayerDied>,
+    state: Res<State<GameState>>,
+    mut overlay: Query<&mut Visibility, With<YouDiedOverlay>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+) {
+    let Ok(mut vis) = overlay.get_single_mut() else { return };
+    if player_died.0 && *state.get() == GameState::GameOver {
+        *vis = Visibility::Visible;
+        if keys.get_just_pressed().next().is_some() || buttons.get_just_pressed().next().is_some() {
+            std::process::exit(0);
+        }
     }
 }
 

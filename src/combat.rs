@@ -4,7 +4,7 @@ use rand::Rng;
 use crate::biomass::{BiomassOrb, BiomassTier, OrbValue};
 use crate::movement::{AttackRecovery, Body, GridPos, WALK_ARRIVAL_DIST};
 use crate::player::{ActiveEntity, Player};
-use crate::world::{map::TileMap, tile::TileType, CurrentMap, GameRng, GameState, LevelEntity};
+use crate::world::{map::TileMap, tile::TileType, CurrentMap, GameRng, GameState, LevelEntity, PlayerDied};
 
 // ── Components ───────────────────────────────────────────────────────────────
 
@@ -168,6 +168,7 @@ impl Plugin for CombatPlugin {
                     knockback_system.after(death_system),
                     civilian_flee_system,
                     update_hp_bars,
+                    player_death_system,
                 )
                 .run_if(in_state(GameState::Playing)),
             );
@@ -585,6 +586,19 @@ fn update_hp_bars(
                 enemy_transform.translation + Vec3::new(0.0, 1.2, 0.0);
             bar_transform.scale = Vec3::new(ratio, 1.0, 1.0);
         }
+    }
+}
+
+fn player_death_system(
+    active: Res<ActiveEntity>,
+    health_query: Query<&Health, With<Player>>,
+    mut player_died: ResMut<PlayerDied>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    let Ok(hp) = health_query.get(active.0) else { return };
+    if hp.current <= 0.0 && !player_died.0 {
+        player_died.0 = true;
+        next_state.set(GameState::GameOver);
     }
 }
 

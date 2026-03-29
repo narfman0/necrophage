@@ -52,6 +52,11 @@ pub struct PopulationDensity {
     pub boss_spawned: bool,
 }
 
+/// Set to true when the player's HP reaches zero, so GameOver overlays can
+/// distinguish a death screen from the normal ending sequence.
+#[derive(Resource, Default)]
+pub struct PlayerDied(pub bool);
+
 /// A level transition waiting for the screen-fade to go fully black before executing.
 /// Set by entrance/exit triggers; cleared by the fade system after firing the real event.
 #[derive(Resource, Default, Clone, PartialEq)]
@@ -75,6 +80,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<PlayerSpeedBonus>()
             .init_resource::<PopulationDensity>()
             .init_resource::<PendingLevelChange>()
+            .init_resource::<PlayerDied>()
             .register_type::<PlayerSpeedBonus>()
             .register_type::<PopulationDensity>()
             .init_state::<GameState>();
