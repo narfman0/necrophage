@@ -62,10 +62,10 @@ Biomass is the core currency — it drives everything.
 | Biomass Threshold | Effect                                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------------------------------------- |
 | 0–10             | Starting size. Single, small entity. Basic melee.                                                               |
-| 11–30            | Slight visual growth. HP/damage +25%. Can infect 1 host.                                                        |
-| 31–75            | Visible size increase. Can control 2 entities simultaneously. Unlocks Tendril parasite subtype (ranged attack). |
-| 76–150           | Large size. Control 3 entities. Unlocks Brute subtype (tank/slow).                                              |
-| 151+              | World destruction threshold unlocked.                                                                           |
+| 11–30            | Slight visual growth. HP/damage/speed +30%. Can infect 1 host.                                                  |
+| 31–75            | Visible size increase (+60%). HP/damage +70%, speed +20%. Can control 2 entities simultaneously.               |
+| 76–150           | Large size (+100%). HP/damage +130%, speed +30%. Control 3 entities.                                            |
+| 151+              | Apex form (+160%). HP/damage +250%, speed +40%.                                                                 |
 
 **Growth mechanics:**
 
@@ -104,9 +104,17 @@ The liberator has dialogue displayed as a simple text overlay. No voiced acting 
 
 ### 9. World Destruction Ending
 
-- At biomass 151+ after the boss is dead: ending sequence triggers
+- Defeat the district boss to trigger the ending sequence
 - Screen overlay with text narration describing the parasite's spread consuming the city
 - MVP ending is narrative, not a separate playable sequence
+
+### 10. Population Density
+
+- Each level tracks a population density counter (total enemies + civilians)
+- Every kill decrements the density; shown in the HUD as "Population: X/Y"
+- When density reaches 0 in the district, a boss and 2 helpers spawn
+- Defeating the boss ends the game
+- Debug command: `set_density <n>` to manually set the density counter
 
 ---
 
@@ -193,8 +201,9 @@ EndingPlugin
 | 7     | NPC & dialogue               | Liberator breaks out, dialogue shows                   | ✅ done |
 | 8     | Quest system                 | Steps advance, betrayal path, single-fire guard        | ✅ done |
 | 9     | Procedural level gen         | Jail + district + buildings, stack-based entry/exit    | ✅ done |
-| 10    | Ending                       | Biomass 151 + boss dead = ending screen                | ✅ done |
+| 10    | Ending                       | Boss dead = ending screen                              | ✅ done |
 | 11    | Polish                       | Map scale 2×, 4-tile doors, player size, shared tile assets, no shadows | ✅ done |
+| 12    | Combat feel + density        | Attack slow, faster movement, biomass speed bonus, population density system, density-triggered boss spawn | ✅ done |
 
 ---
 
