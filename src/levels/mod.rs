@@ -46,7 +46,8 @@ pub struct LevelPlugin;
 impl Plugin for LevelPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(LevelSeed::default())
-            .add_systems(Startup, (seed_rng, generate_world).chain())
+            .add_systems(Startup, seed_rng)
+            .add_systems(PostStartup, generate_world)
             .add_systems(
                 Update,
                 zone_suspend_system.run_if(in_state(crate::world::GameState::Playing)),
