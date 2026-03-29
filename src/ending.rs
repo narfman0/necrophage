@@ -1,6 +1,5 @@
 use bevy::prelude::*;
 
-use crate::biomass::Biomass;
 use crate::quest::BossDefeated;
 use crate::world::GameState;
 
@@ -83,7 +82,6 @@ fn spawn_ending_ui(mut commands: Commands) {
 }
 
 fn check_ending_condition(
-    biomass: Res<Biomass>,
     boss_defeated: Res<BossDefeated>,
     mut phase: ResMut<EndingPhase>,
     mut events: EventWriter<EndingTriggered>,
@@ -92,7 +90,7 @@ fn check_ending_condition(
     if *phase != EndingPhase::None {
         return;
     }
-    if biomass.0 >= 151.0 && boss_defeated.0 {
+    if boss_defeated.0 {
         *phase = EndingPhase::FadingIn;
         events.send(EndingTriggered);
         // Freeze all gameplay systems while the ending plays.
@@ -103,20 +101,14 @@ fn check_ending_condition(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn ending_requires_both_conditions() {
-        // Neither condition alone should trigger the ending.
-        let biomass_only = 200.0f32;
+    fn ending_requires_boss_defeated() {
+        // Boss not defeated — no ending.
         let boss_defeated = false;
-        assert!(!(biomass_only >= 151.0 && boss_defeated));
+        assert!(!boss_defeated);
 
-        let biomass_low = 50.0f32;
+        // Boss defeated — ending triggers.
         let boss_defeated = true;
-        assert!(!(biomass_low >= 151.0 && boss_defeated));
-
-        // Both conditions together trigger it.
-        let biomass = 151.0f32;
-        let boss_defeated = true;
-        assert!(biomass >= 151.0 && boss_defeated);
+        assert!(boss_defeated);
     }
 }
 

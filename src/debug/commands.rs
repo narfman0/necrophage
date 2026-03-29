@@ -5,6 +5,7 @@ use crate::combat::{Enemy, Health};
 use crate::movement::GridPos;
 use crate::player::ActiveEntity;
 use crate::quest::QuestState;
+use crate::world::PopulationDensity;
 
 /// A command to be executed via the debug console or remote API.
 #[derive(Event, Clone)]
@@ -37,6 +38,7 @@ fn dispatch_commands(
     enemies: Query<Entity, With<Enemy>>,
     mut quest: Option<ResMut<QuestState>>,
     mut dir_lights: Query<&mut DirectionalLight>,
+    mut density: Option<ResMut<PopulationDensity>>,
 ) {
     for cmd in cmd_events.read() {
         let output = execute_command(
@@ -51,6 +53,7 @@ fn dispatch_commands(
             &enemies,
             &mut quest,
             &mut dir_lights,
+            &mut density,
         );
         out_events.send(DebugCommandOutput(output));
     }
@@ -68,6 +71,7 @@ fn execute_command(
     enemies: &Query<Entity, With<Enemy>>,
     quest: &mut Option<ResMut<QuestState>>,
     dir_lights: &mut Query<&mut DirectionalLight>,
+    density: &mut Option<ResMut<PopulationDensity>>,
 ) -> String {
     let parts: Vec<&str> = input.trim().split_whitespace().collect();
     if parts.is_empty() {
@@ -149,6 +153,21 @@ fn execute_command(
                 "No QuestState resource found".into()
             }
         }
+        ["set_density", n] => {
+            if let Ok(v) = n.parse::<i32>() {
+                if let Some(d) = density {
+                    d.current = v.max(0);
+                    if d.max == 0 {
+                        d.max = v.max(0);
+                    }
+                    format!("Population density set to {}/{}", d.current, d.max)
+                } else {
+                    "No PopulationDensity resource found".into()
+                }
+            } else {
+                "Usage: set_density <n>".into()
+            }
+        }
         ["shadows", state @ ("on" | "off")] => {
             let enable = *state == "on";
             let mut count = 0;
@@ -172,6 +191,7 @@ fn execute_command(
             "  print biomass\n",
             "  print entities\n",
             "  quest advance\n",
+            "  set_density <n>\n",
             "  shadows <on|off>\n",
             "  help"
         ).into(),

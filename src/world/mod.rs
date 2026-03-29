@@ -34,6 +34,24 @@ pub enum GameState {
     GameOver,
 }
 
+/// Speed bonus applied to the player from biomass tier. 1.0 = no bonus.
+#[derive(Resource, Reflect)]
+pub struct PlayerSpeedBonus(pub f32);
+
+impl Default for PlayerSpeedBonus {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
+/// Current population density for the active level.
+#[derive(Resource, Default, Reflect)]
+pub struct PopulationDensity {
+    pub current: i32,
+    pub max: i32,
+    pub boss_spawned: bool,
+}
+
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
@@ -42,6 +60,10 @@ impl Plugin for WorldPlugin {
         app.insert_resource(CurrentMap(TileMap::new(1, 1, TileType::Wall)))
             .init_resource::<GameRng>()
             .init_resource::<TileAssets>()
+            .init_resource::<PlayerSpeedBonus>()
+            .init_resource::<PopulationDensity>()
+            .register_type::<PlayerSpeedBonus>()
+            .register_type::<PopulationDensity>()
             .init_state::<GameState>();
     }
 }

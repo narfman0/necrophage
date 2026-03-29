@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use rand::Rng;
 
 use crate::biomass::{BiomassOrb, BiomassTier, OrbValue};
-use crate::movement::{Body, GridPos, WALK_ARRIVAL_DIST};
+use crate::movement::{AttackRecovery, Body, GridPos, WALK_ARRIVAL_DIST};
 use crate::player::{ActiveEntity, Player};
 use crate::world::{map::TileMap, tile::TileType, CurrentMap, GameRng, GameState, LevelEntity};
 
@@ -279,14 +279,17 @@ fn enemy_patrol_system(
 }
 
 fn enemy_chase_system(
-    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform), (With<Enemy>, Without<Dying>)>,
+    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>), (With<Enemy>, Without<Dying>)>,
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos, Without<Enemy>>,
     map: Res<CurrentMap>,
 ) {
     let Ok(target) = player_pos.get(active.0) else { return };
-    for (mut pos, _timer, ai, transform) in &mut enemies {
+    for (mut pos, _timer, ai, transform, atk_recovery) in &mut enemies {
         if *ai != EnemyAI::Chase {
+            continue;
+        }
+        if atk_recovery.is_some() {
             continue;
         }
         // Only advance to next tile once visually arrived at current one.
@@ -310,13 +313,14 @@ fn enemy_chase_system(
 }
 
 fn enemy_attack_system(
-    mut enemies: Query<(&Transform, &GridPos, &mut Attack, &EnemyAI), (With<Enemy>, Without<Dying>)>,
+    mut commands: Commands,
+    mut enemies: Query<(Entity, &Transform, &GridPos, &mut Attack, &EnemyAI), (With<Enemy>, Without<Dying>)>,
     active: Res<ActiveEntity>,
     player_tf: Query<&Transform>,
     mut damage_events: EventWriter<DamageEvent>,
 ) {
     let Ok(target_tf) = player_tf.get(active.0) else { return };
-    for (enemy_tf, grid, mut atk, ai) in &mut enemies {
+    for (entity, enemy_tf, grid, mut atk, ai) in &mut enemies {
         if *ai != EnemyAI::Chase && *ai != EnemyAI::AttackTarget {
             continue;
         }
@@ -329,17 +333,19 @@ fn enemy_attack_system(
                 attacker_pos: Some(*grid),
             });
             atk.timer = atk.cooldown;
+            commands.entity(entity).insert(AttackRecovery(0.35));
         }
     }
 }
 
 fn player_attack_system(
+    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     active: Res<ActiveEntity>,
     active_query: Query<(&Transform, &GridPos)>,
     mut attackers: Query<&mut Attack>,
-    enemies: Query<(Entity, &Transform), With<Enemy>>,
+    targets: Query<(Entity, &Transform), (With<Health>, Without<Player>)>,
     tier: Res<BiomassTier>,
     mut damage_events: EventWriter<DamageEvent>,
 ) {
@@ -353,10 +359,10 @@ fn player_attack_system(
     }
     let base_damage = atk.damage * tier.damage_multiplier();
     let mut hit_any = false;
-    for (enemy_entity, enemy_tf) in &enemies {
-        if dist_xz(player_tf.translation, enemy_tf.translation) <= MELEE_RANGE {
+    for (target_entity, target_tf) in &targets {
+        if dist_xz(player_tf.translation, target_tf.translation) <= MELEE_RANGE {
             damage_events.send(DamageEvent {
-                target: enemy_entity,
+                target: target_entity,
                 amount: base_damage,
                 attacker_pos: Some(*player_grid),
             });
@@ -365,6 +371,7 @@ fn player_attack_system(
     }
     if hit_any {
         atk.timer = atk.cooldown;
+        commands.entity(active.0).insert(AttackRecovery(0.35));
     }
 }
 

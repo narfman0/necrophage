@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::player::ActiveEntity;
-use crate::world::{map::TileMap, CurrentMap, GameState};
+use crate::world::{map::TileMap, CurrentMap, GameState, PlayerSpeedBonus};
 use crate::world::tile::tile_to_world;
 
 #[derive(Component, Clone, Copy, Debug, Reflect)]
@@ -16,17 +16,21 @@ pub struct GridPos {
 pub struct MoveDir(pub Vec2);
 
 /// Movement speed in world units per second.
-const MOVE_SPEED: f32 = 5.5;
+const MOVE_SPEED: f32 = 7.0;
 /// Entity collision radius in world units (wall collision + body separation).
 pub const ENTITY_RADIUS: f32 = 0.35;
 /// Walk speed for non-player entities (enemies / NPCs) in world units/sec.
 const WALK_SPEED: f32 = 2.5;
 /// Speed multiplier during a dash.
-const DASH_SPEED: f32 = 18.0;
+const DASH_SPEED: f32 = 22.0;
 /// How long a dash lasts in seconds.
 const DASH_DURATION: f32 = 0.15;
 /// Cooldown between dashes in seconds.
 const DASH_COOLDOWN: f32 = 0.8;
+/// How long the post-dash recovery slow lasts in seconds.
+const DASH_RECOVERY_SLOW: f32 = 0.5;
+/// Speed multiplier during post-dash recovery.
+const DASH_RECOVERY_MULT: f32 = 0.4;
 
 /// Marker: this entity has a physical body that participates in entity-entity
 /// separation. Add to all characters (player, enemies, NPCs).
@@ -42,7 +46,13 @@ pub struct Dash {
     pub cooldown: f32,
     /// Direction of the current dash.
     pub dir: Vec2,
+    /// Seconds remaining in the post-dash recovery slow (0 = no slow).
+    pub recovery: f32,
 }
+
+/// Attack recovery component — slows the entity to 20% speed until it expires.
+#[derive(Component, Reflect)]
+pub struct AttackRecovery(pub f32);
 
 pub struct MovementPlugin;
 
@@ -52,13 +62,15 @@ impl Plugin for MovementPlugin {
             .register_type::<MoveDir>()
             .register_type::<Body>()
             .register_type::<Dash>()
+            .register_type::<AttackRecovery>()
             .add_systems(
                 Update,
                 (
                     wasd_input,
                     dash_input.after(wasd_input),
                     tick_dash.after(dash_input),
-                    apply_movement.after(tick_dash),
+                    tick_attack_recovery.after(tick_dash),
+                    apply_movement.after(tick_attack_recovery),
                     separate_entities.after(apply_movement),
                 )
                 .run_if(in_state(GameState::Playing)),
@@ -108,27 +120,59 @@ fn tick_dash(mut query: Query<&mut Dash>, time: Res<Time>) {
     let dt = time.delta_secs();
     for mut dash in &mut query {
         dash.cooldown = (dash.cooldown - dt).max(0.0);
+        let prev_active = dash.active;
         dash.active = (dash.active - dt).max(0.0);
+        // When the dash burst just ended, start recovery slow.
+        if prev_active > 0.0 && dash.active == 0.0 {
+            dash.recovery = DASH_RECOVERY_SLOW;
+        }
+        if dash.recovery > 0.0 {
+            dash.recovery = (dash.recovery - dt).max(0.0);
+        }
+    }
+}
+
+fn tick_attack_recovery(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut AttackRecovery)>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut ar) in &mut query {
+        ar.0 -= dt;
+        if ar.0 <= 0.0 {
+            commands.entity(entity).remove::<AttackRecovery>();
+        }
     }
 }
 
 fn apply_movement(
     current_map: Res<CurrentMap>,
-    mut query: Query<(&mut Transform, &mut GridPos, &MoveDir, Option<&Dash>)>,
+    mut query: Query<(&mut Transform, &mut GridPos, &MoveDir, Option<&Dash>, Option<&AttackRecovery>)>,
     time: Res<Time>,
+    speed_bonus: Res<PlayerSpeedBonus>,
 ) {
     let map: &TileMap = &current_map.0;
     let dt = time.delta_secs();
 
-    for (mut transform, mut grid_pos, move_dir, dash) in &mut query {
+    for (mut transform, mut grid_pos, move_dir, dash, atk_recovery) in &mut query {
         let (dir, speed) = match dash {
             Some(d) if d.active > 0.0 => (d.dir, DASH_SPEED),
+            Some(d) if d.recovery > 0.0 => {
+                let raw = move_dir.0;
+                if raw == Vec2::ZERO {
+                    continue;
+                }
+                (raw.normalize(), MOVE_SPEED * DASH_RECOVERY_MULT)
+            }
             _ => {
                 let raw = move_dir.0;
                 if raw == Vec2::ZERO {
                     continue;
                 }
-                (raw.normalize(), MOVE_SPEED)
+                let base = MOVE_SPEED * speed_bonus.0;
+                let spd = if atk_recovery.is_some() { base * 0.2 } else { base };
+                (raw.normalize(), spd)
             }
         };
         let vel = dir * speed;

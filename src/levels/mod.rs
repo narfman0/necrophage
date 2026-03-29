@@ -16,7 +16,7 @@ use crate::movement::GridPos;
 use crate::npc::{Liberator, LiberatorState, ScriptTimer};
 use crate::player::{ActiveEntity, Player};
 use crate::quest::LevelTransitionEvent;
-use crate::world::{CurrentMap, GameRng, LevelEntity};
+use crate::world::{CurrentMap, GameRng, LevelEntity, PopulationDensity};
 use crate::world::map::TileMap;
 use crate::world::tile::{spawn_tile, tile_to_world, TileAssets};
 use building::{BuildingGenerator};
@@ -256,14 +256,12 @@ fn handle_transition(
             commands.entity(e).insert(LevelEntity);
         }
 
-        if let Some((bx, by)) = info.boss_position {
-            let e = spawn_enemy(
-                &mut commands, &mut meshes, &mut materials,
-                GridPos { x: bx, y: by }, 300.0, 20.0, Color::srgb(0.6, 0.0, 0.8),
-            );
-            commands.entity(e)
-                .insert(MobBoss).insert(BossAI::default()).insert(LevelEntity);
-        }
+        let total_pop = (info.enemy_positions.len() + info.elite_positions.len() + info.civilian_positions.len()) as i32;
+        commands.insert_resource(PopulationDensity {
+            current: total_pop,
+            max: total_pop,
+            boss_spawned: false,
+        });
 
         // District streetlights
         for &(lx, ly) in &info.streetlight_positions {

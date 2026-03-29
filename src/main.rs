@@ -7,6 +7,7 @@ pub mod levels;
 pub mod movement;
 pub mod npc;
 pub mod player;
+pub mod population;
 pub mod quest;
 pub mod world;
 
@@ -20,8 +21,9 @@ use levels::LevelPlugin;
 use movement::MovementPlugin;
 use npc::NpcPlugin;
 use player::PlayerPlugin;
+use population::PopulationPlugin;
 use quest::{QuestPlugin, QuestState};
-use world::WorldPlugin;
+use world::{PopulationDensity, WorldPlugin};
 
 struct NecrophagePlugin;
 
@@ -39,6 +41,7 @@ impl Plugin for NecrophagePlugin {
             QuestPlugin,
             LevelPlugin,
             EndingPlugin,
+            PopulationPlugin,
         ));
     }
 }
@@ -55,11 +58,11 @@ fn main() {
     .add_plugins(NecrophagePlugin)
     .add_systems(
         Startup,
-        (spawn_biomass_hud, spawn_quest_hud),
+        (spawn_biomass_hud, spawn_quest_hud, spawn_density_hud),
     )
     .add_systems(
         Update,
-        update_quest_hud,
+        (update_quest_hud, update_density_hud),
     );
 
     #[cfg(all(feature = "debug", debug_assertions))]
@@ -72,6 +75,9 @@ fn main() {
 
 #[derive(Component)]
 struct QuestDisplay;
+
+#[derive(Component)]
+struct DensityDisplay;
 
 // ── Spawn ─────────────────────────────────────────────────────────────────────
 
@@ -90,6 +96,24 @@ fn spawn_biomass_hud(mut commands: Commands) {
             ..default()
         },
         BiomassDisplay,
+    ));
+}
+
+fn spawn_density_hud(mut commands: Commands) {
+    commands.spawn((
+        Text::new("Population: 0 / 0"),
+        TextFont {
+            font_size: 15.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.7, 1.0, 0.7)),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(30.0),
+            left: Val::Px(8.0),
+            ..default()
+        },
+        DensityDisplay,
     ));
 }
 
@@ -112,6 +136,18 @@ fn spawn_quest_hud(mut commands: Commands) {
 }
 
 // ── Update ────────────────────────────────────────────────────────────────────
+
+fn update_density_hud(
+    density: Res<PopulationDensity>,
+    mut query: Query<&mut Text, With<DensityDisplay>>,
+) {
+    if !density.is_changed() {
+        return;
+    }
+    for mut text in &mut query {
+        text.0 = format!("Population: {} / {}", density.current, density.max);
+    }
+}
 
 fn update_quest_hud(
     quest: Res<QuestState>,

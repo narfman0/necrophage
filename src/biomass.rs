@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::combat::Health;
 use crate::movement::GridPos;
 use crate::player::{ActiveEntity, Player};
-use crate::world::GameState;
+use crate::world::{GameState, PlayerSpeedBonus};
 
 #[derive(Resource, Default, Reflect)]
 pub struct Biomass(pub f32);
@@ -37,30 +37,40 @@ impl BiomassTier {
     pub fn scale(self) -> Vec3 {
         match self {
             BiomassTier::Tiny => Vec3::ONE,
-            BiomassTier::Small => Vec3::splat(1.15),
-            BiomassTier::Medium => Vec3::splat(1.35),
-            BiomassTier::Large => Vec3::splat(1.6),
-            BiomassTier::Apex => Vec3::splat(2.0),
+            BiomassTier::Small => Vec3::splat(1.3),
+            BiomassTier::Medium => Vec3::splat(1.6),
+            BiomassTier::Large => Vec3::splat(2.0),
+            BiomassTier::Apex => Vec3::splat(2.6),
         }
     }
 
     pub fn hp_bonus(self) -> f32 {
         match self {
             BiomassTier::Tiny => 1.0,
-            BiomassTier::Small => 1.25,
-            BiomassTier::Medium => 1.5,
-            BiomassTier::Large => 2.0,
-            BiomassTier::Apex => 3.0,
+            BiomassTier::Small => 1.3,
+            BiomassTier::Medium => 1.7,
+            BiomassTier::Large => 2.3,
+            BiomassTier::Apex => 3.5,
         }
     }
 
     pub fn damage_multiplier(self) -> f32 {
         match self {
             BiomassTier::Tiny => 1.0,
-            BiomassTier::Small => 1.25,
-            BiomassTier::Medium => 1.5,
-            BiomassTier::Large => 2.0,
-            BiomassTier::Apex => 3.0,
+            BiomassTier::Small => 1.3,
+            BiomassTier::Medium => 1.7,
+            BiomassTier::Large => 2.3,
+            BiomassTier::Apex => 3.5,
+        }
+    }
+
+    pub fn speed_multiplier(self) -> f32 {
+        match self {
+            BiomassTier::Tiny => 1.0,
+            BiomassTier::Small => 1.1,
+            BiomassTier::Medium => 1.2,
+            BiomassTier::Large => 1.3,
+            BiomassTier::Apex => 1.4,
         }
     }
 }
@@ -133,6 +143,7 @@ fn apply_tier_changes(
     mut events: EventReader<TierChanged>,
     mut transforms: Query<&mut Transform, With<Player>>,
     mut healths: Query<&mut Health, With<Player>>,
+    mut speed_bonus: ResMut<PlayerSpeedBonus>,
 ) {
     for ev in events.read() {
         for mut t in &mut transforms {
@@ -143,6 +154,7 @@ fn apply_tier_changes(
             h.max = base * ev.new.hp_bonus();
             h.current = h.current.min(h.max);
         }
+        speed_bonus.0 = ev.new.speed_multiplier();
     }
 }
 
