@@ -546,7 +546,8 @@ pub fn spawn_enemy(
                 base_color: Color::srgb(1.0, 0.1, 0.1),
                 ..default()
             })),
-            Transform::from_xyz(pos.x as f32, 1.0, pos.y as f32),
+            Transform::from_xyz(pos.x as f32, 1.0, pos.y as f32)
+                .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_4)),
         ))
         .id();
 

@@ -23,11 +23,28 @@ const MOVE_SPEED: f32 = 5.5;
 pub const ENTITY_RADIUS: f32 = 0.35;
 /// Lerp speed for non-player entities (enemies / NPCs).
 const LERP_SPEED: f32 = 16.0;
+/// Speed multiplier during a dash.
+const DASH_SPEED: f32 = 18.0;
+/// How long a dash lasts in seconds.
+const DASH_DURATION: f32 = 0.15;
+/// Cooldown between dashes in seconds.
+const DASH_COOLDOWN: f32 = 0.8;
 
 /// Marker: this entity has a physical body that participates in entity-entity
 /// separation. Add to all characters (player, enemies, NPCs).
 #[derive(Component, Reflect)]
 pub struct Body;
+
+/// Dash state. Add to any entity that should be able to dash (Space key).
+#[derive(Component, Default, Reflect)]
+pub struct Dash {
+    /// Seconds remaining on the active dash burst (0 = not dashing).
+    pub active: f32,
+    /// Seconds until the next dash is allowed (0 = ready).
+    pub cooldown: f32,
+    /// Direction of the current dash.
+    pub dir: Vec2,
+}
 
 pub struct MovementPlugin;
 
@@ -36,11 +53,14 @@ impl Plugin for MovementPlugin {
         app.register_type::<GridPos>()
             .register_type::<MoveDir>()
             .register_type::<Body>()
+            .register_type::<Dash>()
             .add_systems(
                 Update,
                 (
                     wasd_input,
-                    apply_movement.after(wasd_input),
+                    dash_input.after(wasd_input),
+                    tick_dash.after(dash_input),
+                    apply_movement.after(tick_dash),
                     separate_entities.after(apply_movement),
                     tab_cycle_entity,
                 )
@@ -70,21 +90,51 @@ fn wasd_input(
     dir.0 = Vec2::new(dx + dy, -dx + dy);
 }
 
+fn dash_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    active: Res<ActiveEntity>,
+    mut query: Query<(&MoveDir, &mut Dash)>,
+) {
+    if !keys.just_pressed(KeyCode::Space) {
+        return;
+    }
+    let Ok((move_dir, mut dash)) = query.get_mut(active.0) else { return };
+    if dash.cooldown > 0.0 || move_dir.0 == Vec2::ZERO {
+        return;
+    }
+    dash.dir = move_dir.0.normalize();
+    dash.active = DASH_DURATION;
+    dash.cooldown = DASH_COOLDOWN;
+}
+
+fn tick_dash(mut query: Query<&mut Dash>, time: Res<Time>) {
+    let dt = time.delta_secs();
+    for mut dash in &mut query {
+        dash.cooldown = (dash.cooldown - dt).max(0.0);
+        dash.active = (dash.active - dt).max(0.0);
+    }
+}
+
 fn apply_movement(
     current_map: Res<CurrentMap>,
-    mut query: Query<(&mut Transform, &mut GridPos, &MoveDir)>,
+    mut query: Query<(&mut Transform, &mut GridPos, &MoveDir, Option<&Dash>)>,
     time: Res<Time>,
 ) {
     let map: &TileMap = &current_map.0;
     let dt = time.delta_secs();
 
-    for (mut transform, mut grid_pos, move_dir) in &mut query {
-        let raw = move_dir.0;
-        if raw == Vec2::ZERO {
-            continue;
-        }
-        let dir = raw.normalize();
-        let vel = dir * MOVE_SPEED;
+    for (mut transform, mut grid_pos, move_dir, dash) in &mut query {
+        let (dir, speed) = match dash {
+            Some(d) if d.active > 0.0 => (d.dir, DASH_SPEED),
+            _ => {
+                let raw = move_dir.0;
+                if raw == Vec2::ZERO {
+                    continue;
+                }
+                (raw.normalize(), MOVE_SPEED)
+            }
+        };
+        let vel = dir * speed;
         let r = ENTITY_RADIUS;
 
         let mut px = transform.translation.x;
