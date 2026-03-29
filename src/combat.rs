@@ -51,6 +51,23 @@ pub struct HpBar(pub Entity);
 #[derive(Component)]
 pub struct HpBarRoot;
 
+/// Whether an enemy attacks at melee range or from a distance with a projectile.
+#[derive(Component, Default, Clone, Copy, PartialEq, Eq, Reflect)]
+pub enum AttackMode {
+    #[default]
+    Melee,
+    Ranged,
+}
+
+/// Moving projectile spawned by a ranged enemy.
+#[derive(Component)]
+pub struct Projectile {
+    pub target: Entity,
+    pub damage: f32,
+    /// Seconds remaining before auto-despawn (in case target died).
+    pub lifetime: f32,
+}
+
 /// Per-enemy sight range in tiles (Chebyshev). Defaults to 8 if not present.
 #[derive(Component)]
 pub struct SightRange(pub u32);
@@ -82,6 +99,14 @@ const LOST_TIMEOUT: f32 = 2.0;
 const MELEE_RANGE: f32 = 1.5;
 /// Boss melee range — slightly larger to match its area-of-effect swipe.
 const BOSS_MELEE_RANGE: f32 = 2.5;
+/// Maximum distance from which a ranged enemy will shoot (world units).
+const RANGED_ATTACK_RANGE: f32 = 7.0;
+/// Ranged enemies stop chasing when they reach this distance (world units).
+const RANGED_STOP_DIST: f32 = 6.0;
+/// Speed of fired projectiles in world units per second.
+const PROJECTILE_SPEED: f32 = 9.0;
+/// Despawn projectile when this close to its target (world units).
+const PROJECTILE_HIT_DIST: f32 = 0.4;
 
 /// XZ-plane (2-D) distance between two world-space positions.
 fn dist_xz(a: Vec3, b: Vec3) -> f32 {
@@ -150,6 +175,7 @@ impl Plugin for CombatPlugin {
             .register_type::<Health>()
             .register_type::<Attack>()
             .register_type::<EnemyAI>()
+            .register_type::<AttackMode>()
             .add_systems(
                 Update,
                 (
@@ -160,6 +186,7 @@ impl Plugin for CombatPlugin {
                     enemy_patrol_system,
                     enemy_chase_system,
                     enemy_attack_system,
+                    projectile_system,
                     boss_ai_system,
                     player_attack_system,
                     apply_damage,
@@ -280,17 +307,23 @@ fn enemy_patrol_system(
 }
 
 fn enemy_chase_system(
-    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>), (With<Enemy>, Without<Dying>)>,
+    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&AttackMode>), (With<Enemy>, Without<Dying>)>,
     active: Res<ActiveEntity>,
-    player_pos: Query<&GridPos, Without<Enemy>>,
+    player_pos: Query<(&GridPos, &Transform), Without<Enemy>>,
     map: Res<CurrentMap>,
 ) {
-    let Ok(target) = player_pos.get(active.0) else { return };
-    for (mut pos, _timer, ai, transform, atk_recovery) in &mut enemies {
+    let Ok((target, target_tf)) = player_pos.get(active.0) else { return };
+    for (mut pos, _timer, ai, transform, atk_recovery, mode) in &mut enemies {
         if *ai != EnemyAI::Chase {
             continue;
         }
         if atk_recovery.is_some() {
+            continue;
+        }
+        // Ranged enemies halt once they're close enough to shoot.
+        if mode == Some(&AttackMode::Ranged)
+            && dist_xz(transform.translation, target_tf.translation) <= RANGED_STOP_DIST
+        {
             continue;
         }
         // Only advance to next tile once visually arrived at current one.
@@ -315,26 +348,87 @@ fn enemy_chase_system(
 
 fn enemy_attack_system(
     mut commands: Commands,
-    mut enemies: Query<(Entity, &Transform, &GridPos, &mut Attack, &EnemyAI), (With<Enemy>, Without<Dying>)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut enemies: Query<(Entity, &Transform, &GridPos, &mut Attack, &EnemyAI, Option<&AttackMode>), (With<Enemy>, Without<Dying>)>,
     active: Res<ActiveEntity>,
     player_tf: Query<&Transform>,
     mut damage_events: EventWriter<DamageEvent>,
 ) {
     let Ok(target_tf) = player_tf.get(active.0) else { return };
-    for (entity, enemy_tf, grid, mut atk, ai) in &mut enemies {
+    for (entity, enemy_tf, grid, mut atk, ai, mode) in &mut enemies {
         if *ai != EnemyAI::Chase && *ai != EnemyAI::AttackTarget {
             continue;
         }
-        if dist_xz(enemy_tf.translation, target_tf.translation) <= MELEE_RANGE
-            && atk.timer <= 0.0
-        {
+        if atk.timer > 0.0 {
+            continue;
+        }
+        let dist = dist_xz(enemy_tf.translation, target_tf.translation);
+        match mode.copied().unwrap_or_default() {
+            AttackMode::Melee => {
+                if dist <= MELEE_RANGE {
+                    damage_events.send(DamageEvent {
+                        target: active.0,
+                        amount: atk.damage,
+                        attacker_pos: Some(*grid),
+                    });
+                    atk.timer = atk.cooldown;
+                    commands.entity(entity).insert(AttackRecovery(0.35));
+                }
+            }
+            AttackMode::Ranged => {
+                if dist <= RANGED_ATTACK_RANGE {
+                    // Spawn a projectile heading toward the player.
+                    commands.spawn((
+                        Projectile {
+                            target: active.0,
+                            damage: atk.damage,
+                            lifetime: 3.0,
+                        },
+                        Mesh3d(meshes.add(Sphere::new(0.1))),
+                        MeshMaterial3d(materials.add(StandardMaterial {
+                            base_color: Color::srgb(1.0, 0.6, 0.0),
+                            emissive: LinearRgba::new(2.0, 1.0, 0.0, 1.0),
+                            ..default()
+                        })),
+                        Transform::from_translation(enemy_tf.translation + Vec3::new(0.0, 0.5, 0.0)),
+                        LevelEntity,
+                    ));
+                    atk.timer = atk.cooldown;
+                    commands.entity(entity).insert(AttackRecovery(0.2));
+                }
+            }
+        }
+    }
+}
+
+fn projectile_system(
+    mut commands: Commands,
+    mut projectiles: Query<(Entity, &mut Projectile, &mut Transform)>,
+    targets: Query<&Transform, Without<Projectile>>,
+    mut damage_events: EventWriter<DamageEvent>,
+    time: Res<Time>,
+) {
+    for (entity, mut proj, mut tf) in &mut projectiles {
+        proj.lifetime -= time.delta_secs();
+        if proj.lifetime <= 0.0 {
+            commands.entity(entity).despawn_recursive();
+            continue;
+        }
+        let Ok(target_tf) = targets.get(proj.target) else {
+            commands.entity(entity).despawn_recursive();
+            continue;
+        };
+        let target_pos = target_tf.translation + Vec3::new(0.0, 0.5, 0.0);
+        let dir = (target_pos - tf.translation).normalize_or_zero();
+        tf.translation += dir * PROJECTILE_SPEED * time.delta_secs();
+        if tf.translation.distance(target_pos) <= PROJECTILE_HIT_DIST {
             damage_events.send(DamageEvent {
-                target: active.0,
-                amount: atk.damage,
-                attacker_pos: Some(*grid),
+                target: proj.target,
+                amount: proj.damage,
+                attacker_pos: None,
             });
-            atk.timer = atk.cooldown;
-            commands.entity(entity).insert(AttackRecovery(0.35));
+            commands.entity(entity).despawn_recursive();
         }
     }
 }

@@ -8,8 +8,10 @@ use std::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use rand::{rngs::StdRng, SeedableRng};
 
+use rand::Rng;
+
 use crate::combat::{
-    spawn_enemy, BossAI, Civilian, Elite, Health, HpBarRoot, MobBoss, PatrolTimer,
+    spawn_enemy, AttackMode, BossAI, Civilian, Elite, Health, HpBarRoot, MobBoss, PatrolTimer,
 };
 use crate::dialogue::DialogueQueue;
 use crate::movement::GridPos;
@@ -259,11 +261,12 @@ fn handle_transition(
         }
 
         for &(ex, ey) in &info.enemy_positions {
+            let mode = if rng.gen_bool(0.5) { AttackMode::Ranged } else { AttackMode::Melee };
             let e = spawn_enemy(
                 &mut commands, &mut meshes, &mut materials,
                 GridPos { x: ex, y: ey }, 20.0, 6.0, Color::srgb(0.8, 0.2, 0.2),
             );
-            commands.entity(e).insert(LevelEntity);
+            commands.entity(e).insert(mode).insert(LevelEntity);
         }
 
         for &(ex, ey) in &info.elite_positions {
@@ -534,13 +537,15 @@ fn enter_building_system(
             commands.entity(e).insert(LevelEntity);
         }
 
-        // Spawn enemies.
+        // Spawn enemies with deterministic 50/50 melee/ranged assignment.
+        let mut mode_rng = StdRng::seed_from_u64(ev.building_id.wrapping_add(0xdead_beef));
         for &(ex, ey) in &info.enemy_positions {
+            let mode = if mode_rng.gen_bool(0.5) { AttackMode::Ranged } else { AttackMode::Melee };
             let e = spawn_enemy(
                 &mut commands, &mut meshes, &mut materials,
                 GridPos { x: ex, y: ey }, 20.0, 8.0, Color::srgb(0.8, 0.2, 0.2),
             );
-            commands.entity(e).insert(LevelEntity);
+            commands.entity(e).insert(mode).insert(LevelEntity);
         }
         for &(ex, ey) in &info.elite_positions {
             let e = spawn_enemy(
