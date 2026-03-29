@@ -3,7 +3,7 @@ use rand::Rng;
 
 use crate::biomass::{BiomassOrb, BiomassTier, OrbValue};
 use crate::dialogue::DialogueQueue;
-use crate::movement::{Body, GridPos};
+use crate::movement::{Body, GridPos, WALK_ARRIVAL_DIST};
 use crate::player::{ActiveEntity, Player};
 use crate::possession::Corpse;
 use crate::world::{CurrentMap, GameRng, GameState, LevelEntity};
@@ -202,20 +202,27 @@ fn enemy_lost_system(
 }
 
 fn enemy_patrol_system(
-    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI), With<Enemy>>,
+    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform), With<Enemy>>,
     map: Res<CurrentMap>,
     time: Res<Time>,
     mut rng: ResMut<GameRng>,
 ) {
-    for (mut pos, mut timer, ai) in &mut enemies {
+    for (mut pos, mut timer, ai, transform) in &mut enemies {
         if *ai != EnemyAI::Patrol {
             continue;
         }
+        // Wait until visually arrived at current tile before picking the next one.
+        let target_xz = Vec2::new(pos.x as f32, pos.y as f32);
+        let current_xz = Vec2::new(transform.translation.x, transform.translation.z);
+        if current_xz.distance(target_xz) > WALK_ARRIVAL_DIST {
+            continue;
+        }
+        // Brief pause between steps so patrol doesn't look like a march.
         timer.0 -= time.delta_secs();
         if timer.0 > 0.0 {
             continue;
         }
-        timer.0 = 1.5;
+        timer.0 = 0.3;
         let dirs = [(0, -1), (0, 1), (-1, 0), (1, 0)];
         let (dx, dy) = dirs[rng.0.gen_range(0..4)];
         let nx = pos.x + dx;
@@ -228,22 +235,22 @@ fn enemy_patrol_system(
 }
 
 fn enemy_chase_system(
-    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI), With<Enemy>>,
+    mut enemies: Query<(&mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform), With<Enemy>>,
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos, Without<Enemy>>,
     map: Res<CurrentMap>,
-    time: Res<Time>,
 ) {
     let Ok(target) = player_pos.get(active.0) else { return };
-    for (mut pos, mut timer, ai) in &mut enemies {
+    for (mut pos, _timer, ai, transform) in &mut enemies {
         if *ai != EnemyAI::Chase {
             continue;
         }
-        timer.0 -= time.delta_secs();
-        if timer.0 > 0.0 {
+        // Only advance to next tile once visually arrived at current one.
+        let target_xz = Vec2::new(pos.x as f32, pos.y as f32);
+        let current_xz = Vec2::new(transform.translation.x, transform.translation.z);
+        if current_xz.distance(target_xz) > WALK_ARRIVAL_DIST {
             continue;
         }
-        timer.0 = 0.6;
         let dx = (target.x - pos.x).signum();
         let dy = (target.y - pos.y).signum();
         // Prefer diagonal step when both axes are non-zero (smarter pathing).

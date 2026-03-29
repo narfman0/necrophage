@@ -21,8 +21,8 @@ pub struct MoveDir(pub Vec2);
 const MOVE_SPEED: f32 = 5.5;
 /// Entity collision radius in world units (wall collision + body separation).
 pub const ENTITY_RADIUS: f32 = 0.35;
-/// Lerp speed for non-player entities (enemies / NPCs).
-const LERP_SPEED: f32 = 16.0;
+/// Walk speed for non-player entities (enemies / NPCs) in world units/sec.
+const WALK_SPEED: f32 = 2.5;
 /// Speed multiplier during a dash.
 const DASH_SPEED: f32 = 18.0;
 /// How long a dash lasts in seconds.
@@ -173,16 +173,20 @@ fn apply_movement(
     }
 }
 
-/// Lerp transform toward grid position for entities that don't use continuous movement
-/// (enemies, NPCs, knockback targets).
+/// Move non-player entities (enemies, NPCs) toward their GridPos target at constant speed.
+pub const WALK_ARRIVAL_DIST: f32 = 0.08;
 fn lerp_transforms(
     mut query: Query<(&GridPos, &mut Transform), Without<MoveDir>>,
     time: Res<Time>,
 ) {
-    let speed = LERP_SPEED * time.delta_secs();
+    let step = WALK_SPEED * time.delta_secs();
     for (pos, mut transform) in &mut query {
         let target = tile_to_world(pos.x, pos.y) + Vec3::new(0.0, 0.5, 0.0);
-        transform.translation = transform.translation.lerp(target, speed.min(1.0));
+        let delta = target - transform.translation;
+        let dist = delta.length();
+        if dist > WALK_ARRIVAL_DIST {
+            transform.translation += delta / dist * step.min(dist);
+        }
     }
 }
 
