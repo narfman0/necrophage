@@ -338,7 +338,7 @@ fn swarm_follow_system(
 
         if let Some(mut path) = path_opt {
             path.recalc_timer -= dt;
-            if path.steps.is_empty() || path.recalc_timer <= 0.0 {
+            if path.recalc_timer <= 0.0 {
                 path.steps = map.0.astar((member_gp.x, member_gp.y), (leader_gp.x, leader_gp.y)).into();
                 path.recalc_timer = 0.4;
             }
@@ -416,7 +416,7 @@ fn swarm_ai_system(
         } else {
             // Melee — A* navigate toward enemy.
             path.recalc_timer -= dt;
-            if path.steps.is_empty() || path.recalc_timer <= 0.0 {
+            if path.recalc_timer <= 0.0 {
                 path.steps = map.0.astar((member_gp.x, member_gp.y), (enemy_gp.x, enemy_gp.y)).into();
                 path.recalc_timer = 0.4;
             }
