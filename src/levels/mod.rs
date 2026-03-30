@@ -94,7 +94,7 @@ impl Plugin for LevelPlugin {
             .add_systems(PostStartup, generate_world)
             .add_systems(Update, handle_new_game)
             .add_systems(
-                Update,
+                PostUpdate,
                 zone_suspend_system.run_if(in_state(crate::world::GameState::Playing)),
             );
     }
@@ -447,7 +447,7 @@ fn zone_suspend_system(
     for (entity, pos, suspended) in enemies.iter().chain(civilians.iter()) {
         let dist = (pos.x - ppos.x).abs().max((pos.y - ppos.y).abs());
         if dist > SUSPEND_DIST && suspended.is_none() {
-            commands.entity(entity).insert(Suspended);
+            commands.entity(entity).try_insert(Suspended);
         } else if dist <= WAKE_DIST && suspended.is_some() {
             commands.entity(entity).remove::<Suspended>();
         }
