@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::biomass::{Biomass, BiomassTier};
 use crate::combat::{Enemy, Health, Invincible};
 use crate::movement::GridPos;
-use crate::player::ActiveEntity;
+use crate::player::{ActiveEntity, Player};
 use crate::quest::QuestState;
 use crate::world::PopulationDensity;
 
@@ -39,6 +39,7 @@ fn dispatch_commands(
     mut quest: Option<ResMut<QuestState>>,
     mut dir_lights: Query<&mut DirectionalLight>,
     mut density: Option<ResMut<PopulationDensity>>,
+    player_query: Query<(), (With<Player>, With<Invincible>)>,
 ) {
     for cmd in cmd_events.read() {
         let output = execute_command(
@@ -54,6 +55,7 @@ fn dispatch_commands(
             &mut quest,
             &mut dir_lights,
             &mut density,
+            &player_query,
         );
         out_events.send(DebugCommandOutput(output));
     }
@@ -72,6 +74,7 @@ fn execute_command(
     quest: &mut Option<ResMut<QuestState>>,
     dir_lights: &mut Query<&mut DirectionalLight>,
     density: &mut Option<ResMut<PopulationDensity>>,
+    player_query: &Query<(), (With<Player>, With<Invincible>)>,
 ) -> String {
     let parts: Vec<&str> = input.trim().split_whitespace().collect();
     if parts.is_empty() {
@@ -168,13 +171,13 @@ fn execute_command(
                 "Usage: set_density <n>".into()
             }
         }
-        ["invincible", state @ ("on" | "off")] => {
-            if *state == "on" {
-                commands.entity(active.0).insert(Invincible);
-                "Invincibility ON".into()
-            } else {
+        ["invincible"] => {
+            if player_query.get(active.0).is_ok() {
                 commands.entity(active.0).remove::<Invincible>();
                 "Invincibility OFF".into()
+            } else {
+                commands.entity(active.0).insert(Invincible);
+                "Invincibility ON".into()
             }
         }
         ["shadows", state @ ("on" | "off")] => {
@@ -201,7 +204,7 @@ fn execute_command(
             "  print entities\n",
             "  quest advance\n",
             "  set_density <n>\n",
-            "  invincible <on|off>\n",
+            "  invincible\n",
             "  shadows <on|off>\n",
             "  help"
         ).into(),

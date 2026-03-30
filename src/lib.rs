@@ -281,14 +281,18 @@ pub mod hud {
         mut overlay: Query<&mut Visibility, With<YouDiedOverlay>>,
         keys: Res<ButtonInput<KeyCode>>,
         buttons: Res<ButtonInput<MouseButton>>,
+        time: Res<Time>,
+        mut elapsed: Local<f32>,
     ) {
         let Ok(mut vis) = overlay.get_single_mut() else {
             return;
         };
         if player_died.0 && *state.get() == GameState::GameOver {
             *vis = Visibility::Visible;
-            if keys.get_just_pressed().next().is_some()
-                || buttons.get_just_pressed().next().is_some()
+            *elapsed += time.delta_secs();
+            if *elapsed >= 1.0
+                && (keys.get_just_pressed().next().is_some()
+                    || buttons.get_just_pressed().next().is_some())
             {
                 std::process::exit(0);
             }
