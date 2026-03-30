@@ -157,7 +157,8 @@ Established patterns — keep consistent when adding new systems:
 
 ## Don't
 
-- **Don't use `cd` in bash commands.**
+- **Don't use `cd` in bash commands.** Never `cd` into the repo — always pass the path explicitly.
+- **For git, ALWAYS use `git -C C:/Users/narfman0/workspace/necrophage <command>`.** Never `cd` first. Every single git invocation must include `-C <path>`. Example: `git -C C:/Users/narfman0/workspace/necrophage status`, `git -C C:/Users/narfman0/workspace/necrophage add -A`, `git -C C:/Users/narfman0/workspace/necrophage commit -m "..."`, `git -C C:/Users/narfman0/workspace/necrophage push origin master`.
 - **Don't use `rand::thread_rng()` in systems.**
 - **Don't leave dead code or unused imports.**
 
