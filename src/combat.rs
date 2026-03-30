@@ -6,7 +6,7 @@ use rand::Rng;
 use crate::biomass::BiomassTier;
 use crate::movement::{AttackRecovery, Body, GridPos, MoveDir, WALK_ARRIVAL_DIST};
 use crate::player::{ActiveEntity, Player};
-use crate::world::{map::TileMap, tile::TileType, CurrentMap, GameRng, GameState, LevelEntity, PlayerDied, Suspended};
+use crate::world::{map::TileMap, tile::TileType, CurrentMap, Friendly, GameRng, GameState, LevelEntity, PlayerDied, Suspended};
 
 /// Freezes virtual time briefly on heavy hits for impactful feel.
 /// Systems that read `Time<Real>` are unaffected; all others pause.
@@ -119,11 +119,18 @@ pub struct Corpse {
     pub biomass_value: f32,
 }
 
-/// Marks an entity that is fading out after death. Despawned when timer reaches zero.
+/// Marks an entity that is fading out after death. Despawned when fade completes.
+/// Phase 1: `delay` counts down (entity is visible, no change).
+/// Phase 2: `timer` counts down while the mesh alpha fades from 1.0 to 0.0.
 #[derive(Component)]
 pub struct Dying {
+    pub delay: f32,
     pub timer: f32,
 }
+
+/// Marks an entity that an enemy is actively targeting.
+#[derive(Component, Reflect)]
+pub struct ChaseTarget(pub Entity);
 
 /// Cached A* path for an entity. Steps are consumed one by one as the entity moves.
 #[derive(Component, Default)]
@@ -140,7 +147,10 @@ pub struct FloatingNumber {
     pub max_timer: f32,
 }
 
-const DISSOLVE_DURATION: f32 = 0.6;
+/// How long to wait after death before starting the alpha fade.
+const DISSOLVE_DELAY: f32 = 1.0;
+/// How long the alpha fade takes (1.0 → 0.0).
+const DISSOLVE_DURATION: f32 = 2.0;
 
 const LOST_TIMEOUT: f32 = 2.0;
 
@@ -279,22 +289,30 @@ fn tick_attack_cooldowns(mut query: Query<&mut Attack>, time: Res<Time>) {
 }
 
 fn enemy_sight_system(
-    mut enemies: Query<(&GridPos, &mut EnemyAI, &SightRange, &mut LostTimer), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
-    active: Res<ActiveEntity>,
-    player_pos: Query<&GridPos>,
+    mut commands: Commands,
+    mut enemies: Query<(Entity, &GridPos, &mut EnemyAI, &SightRange, &mut LostTimer), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
+    friendlies: Query<(Entity, &GridPos), (With<Friendly>, Without<Dying>)>,
     map: Res<CurrentMap>,
     mut alert_events: EventWriter<AlertEvent>,
 ) {
-    let Ok(target_pos) = player_pos.get(active.0) else { return };
-    for (pos, mut ai, sight, mut lost) in &mut enemies {
-        let dist = (pos.x - target_pos.x).abs().max((pos.y - target_pos.y).abs());
-        if dist <= sight.0 as i32 && has_line_of_sight(&map.0, *pos, *target_pos) {
+    for (enemy_entity, pos, mut ai, sight, mut lost) in &mut enemies {
+        // Find the closest visible friendly entity within sight range.
+        let mut best: Option<(Entity, i32)> = None;
+        for (target_entity, target_pos) in &friendlies {
+            let dist = (pos.x - target_pos.x).abs().max((pos.y - target_pos.y).abs());
+            if dist <= sight.0 as i32 && has_line_of_sight(&map.0, *pos, *target_pos) {
+                if best.is_none() || dist < best.unwrap().1 {
+                    best = Some((target_entity, dist));
+                }
+            }
+        }
+        if let Some((target_entity, _)) = best {
             if *ai != EnemyAI::Chase {
-                // First sighting — alert nearby patrolling enemies.
                 alert_events.send(AlertEvent { origin: *pos });
             }
             *ai = EnemyAI::Chase;
-            lost.0 = LOST_TIMEOUT; // still visible — reset lost countdown
+            lost.0 = LOST_TIMEOUT;
+            commands.entity(enemy_entity).insert(ChaseTarget(target_entity));
         }
     }
 }
@@ -373,21 +391,28 @@ fn enemy_patrol_system(
 }
 
 fn enemy_chase_system(
-    mut enemies: Query<(Entity, &mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&AttackMode>, Option<&mut EntityPath>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
+    mut commands: Commands,
+    mut enemies: Query<(Entity, &mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&AttackMode>, Option<&mut EntityPath>, Option<&ChaseTarget>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
     active: Res<ActiveEntity>,
-    player_pos: Query<(&GridPos, &Transform), Without<Enemy>>,
+    target_query: Query<(&GridPos, &Transform), (With<Friendly>, Without<Enemy>)>,
     map: Res<CurrentMap>,
     time: Res<Time>,
 ) {
-    let Ok((target, target_tf)) = player_pos.get(active.0) else { return };
     let dt = time.delta_secs();
-    for (entity, mut pos, _timer, ai, transform, atk_recovery, mode, mut path_opt) in &mut enemies {
+    for (entity, mut pos, _timer, ai, transform, atk_recovery, mode, mut path_opt, chase_opt) in &mut enemies {
         if *ai != EnemyAI::Chase {
             continue;
         }
         if atk_recovery.is_some() {
             continue;
         }
+        // Determine current target: use stored ChaseTarget or fall back to active entity.
+        let target_entity = chase_opt.map(|ct| ct.0).unwrap_or(active.0);
+        let Ok((target, target_tf)) = target_query.get(target_entity) else {
+            // Target is gone — fall back to active player.
+            commands.entity(entity).remove::<ChaseTarget>();
+            continue;
+        };
         // Ranged enemies halt once they're close enough to shoot.
         if mode == Some(&AttackMode::Ranged)
             && dist_xz(transform.translation, target_tf.translation) <= RANGED_STOP_DIST
@@ -447,25 +472,26 @@ fn enemy_attack_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut enemies: Query<(Entity, &Transform, &GridPos, &mut Attack, &EnemyAI, Option<&AttackMode>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
+    mut enemies: Query<(Entity, &Transform, &GridPos, &mut Attack, &EnemyAI, Option<&AttackMode>, Option<&ChaseTarget>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
     active: Res<ActiveEntity>,
-    player_tf: Query<&Transform>,
+    target_query: Query<&Transform, (With<Friendly>, Without<Enemy>)>,
     mut damage_events: EventWriter<DamageEvent>,
 ) {
-    let Ok(target_tf) = player_tf.get(active.0) else { return };
-    for (entity, enemy_tf, grid, mut atk, ai, mode) in &mut enemies {
+    for (entity, enemy_tf, grid, mut atk, ai, mode, chase_opt) in &mut enemies {
         if *ai != EnemyAI::Chase && *ai != EnemyAI::AttackTarget {
             continue;
         }
         if atk.timer > 0.0 {
             continue;
         }
+        let target_entity = chase_opt.map(|ct| ct.0).unwrap_or(active.0);
+        let Ok(target_tf) = target_query.get(target_entity) else { continue };
         let dist = dist_xz(enemy_tf.translation, target_tf.translation);
         match mode.copied().unwrap_or_default() {
             AttackMode::Melee => {
                 if dist <= MELEE_RANGE {
                     damage_events.send(DamageEvent {
-                        target: active.0,
+                        target: target_entity,
                         amount: atk.damage,
                         attacker_pos: Some(*grid),
                     });
@@ -477,7 +503,7 @@ fn enemy_attack_system(
                 if dist <= RANGED_ATTACK_RANGE {
                     spawn_projectile(
                         &mut commands, &mut meshes, &mut materials,
-                        enemy_tf.translation, active.0, target_tf.translation, atk.damage,
+                        enemy_tf.translation, target_entity, target_tf.translation, atk.damage,
                         Color::srgb(1.0, 0.6, 0.0), LinearRgba::new(2.0, 1.0, 0.0, 1.0),
                     );
                     atk.timer = atk.cooldown;
@@ -780,52 +806,66 @@ pub fn death_system(
     }
 }
 
-/// Interact range (Chebyshev tiles) to consume a corpse.
-const CONSUME_RANGE: i32 = 2;
+/// Walk-over range (Chebyshev tiles) to auto-consume a corpse.
+const CONSUME_RANGE: i32 = 1;
 
 fn consume_corpse_system(
     mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
     active: Res<ActiveEntity>,
     active_pos: Query<&GridPos>,
-    corpses: Query<(Entity, &GridPos, &Corpse)>,
+    corpses: Query<(Entity, &GridPos, &Corpse, &Transform)>,
     mut biomass: ResMut<crate::biomass::Biomass>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyE) {
-        return;
-    }
     let Ok(player_gp) = active_pos.get(active.0) else { return };
 
-    // Find the nearest corpse within range.
-    let mut best: Option<(Entity, i32, f32)> = None;
-    for (entity, gp, corpse) in &corpses {
+    // Consume every corpse the player is standing on or adjacent to.
+    for (entity, gp, corpse, transform) in &corpses {
         let dist = (gp.x - player_gp.x).abs().max((gp.y - player_gp.y).abs());
         if dist <= CONSUME_RANGE {
-            if best.is_none() || dist < best.unwrap().1 {
-                best = Some((entity, dist, corpse.biomass_value));
-            }
+            biomass.0 += corpse.biomass_value;
+            // Floating "+Xbm" text above the corpse.
+            let world_pos = transform.translation + Vec3::new(0.0, 1.2, 0.0);
+            commands.spawn((
+                Text(format!("+{:.0}bm", corpse.biomass_value)),
+                TextFont { font_size: 14.0, ..default() },
+                TextColor(Color::srgba(0.3, 1.0, 0.3, 1.0)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    ..default()
+                },
+                FloatingNumber { world_pos, timer: 1.0, max_timer: 1.0 },
+            ));
+            commands.entity(entity)
+                .remove::<Corpse>()
+                .insert(Dying { delay: DISSOLVE_DELAY, timer: DISSOLVE_DURATION });
         }
-    }
-
-    if let Some((entity, _, value)) = best {
-        biomass.0 += value;
-        commands.entity(entity)
-            .remove::<Corpse>()
-            .insert(Dying { timer: DISSOLVE_DURATION });
     }
 }
 
 fn dissolve_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut Dying, &mut Transform)>,
+    mut query: Query<(Entity, &mut Dying, Option<&MeshMaterial3d<StandardMaterial>>)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     time: Res<Time>,
 ) {
-    for (entity, mut dying, mut transform) in &mut query {
+    for (entity, mut dying, mat_opt) in &mut query {
+        // Phase 1: wait before starting the fade.
+        if dying.delay > 0.0 {
+            dying.delay -= time.delta_secs();
+            continue;
+        }
+        // Phase 2: fade alpha from 1 → 0 over DISSOLVE_DURATION.
         dying.timer -= time.delta_secs();
-        // Scale to zero as entity dissolves — avoids the dark/black artefact that
-        // occurs when PBR materials are blended toward zero alpha.
-        let progress = (dying.timer / DISSOLVE_DURATION).clamp(0.0, 1.0);
-        transform.scale = Vec3::splat(progress);
+        let alpha = (dying.timer / DISSOLVE_DURATION).clamp(0.0, 1.0);
+        if let Some(mat_handle) = mat_opt {
+            if let Some(mat) = materials.get_mut(mat_handle.id()) {
+                mat.alpha_mode = AlphaMode::Blend;
+                let c = mat.base_color.to_srgba();
+                mat.base_color = Color::srgba(c.red, c.green, c.blue, alpha);
+            }
+        }
         if dying.timer <= 0.0 {
             commands.entity(entity).despawn_recursive();
         }

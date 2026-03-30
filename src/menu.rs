@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::save::{read_save, LoadGame, SaveGame, SAVE_SLOTS};
-use crate::world::GameState;
+use crate::world::{GameState, NewGame};
 
 // ── Main Menu ─────────────────────────────────────────────────────────────────
 
@@ -137,6 +137,7 @@ fn handle_main_menu_buttons(
     mut interaction_query: Query<(&Interaction, &MainMenuButton), Changed<Interaction>>,
     mut next_state: ResMut<NextState<GameState>>,
     mut load_events: EventWriter<LoadGame>,
+    mut new_game_events: EventWriter<NewGame>,
 ) {
     for (interaction, button) in &mut interaction_query {
         if *interaction != Interaction::Pressed {
@@ -144,6 +145,7 @@ fn handle_main_menu_buttons(
         }
         match button {
             MainMenuButton::NewGame => {
+                new_game_events.send(NewGame);
                 next_state.set(GameState::Playing);
             }
             MainMenuButton::LoadSlot(slot) => {
@@ -167,7 +169,9 @@ pub struct PauseMenuRoot;
 #[derive(Component)]
 enum PauseMenuButton {
     SaveSlot(usize),
+    LoadSlot(usize),
     Continue,
+    BackToMenu,
 }
 
 pub struct PauseMenuPlugin;
@@ -208,7 +212,11 @@ fn spawn_pause_menu(mut commands: Commands) {
                 TextColor(Color::WHITE),
             ));
 
-            root.spawn(Node { height: Val::Px(20.0), ..default() });
+            root.spawn(Node { height: Val::Px(16.0), ..default() });
+
+            spawn_text_button(root, "Continue  [Esc]", Color::srgb(0.22, 0.32, 0.12), PauseMenuButton::Continue);
+
+            root.spawn(Node { height: Val::Px(8.0), ..default() });
 
             for slot in 0..SAVE_SLOTS {
                 root.spawn((
@@ -231,26 +239,44 @@ fn spawn_pause_menu(mut commands: Commands) {
                 });
             }
 
-            root.spawn(Node { height: Val::Px(10.0), ..default() });
+            root.spawn(Node { height: Val::Px(4.0), ..default() });
 
-            root.spawn((
-                Button,
-                Node {
-                    padding: UiRect::axes(Val::Px(32.0), Val::Px(10.0)),
-                    min_width: Val::Px(260.0),
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.22, 0.32, 0.12)),
-                PauseMenuButton::Continue,
-            ))
-            .with_children(|btn| {
-                btn.spawn((
-                    Text::new("Continue  [Esc]"),
-                    TextFont { font_size: 22.0, ..default() },
-                    TextColor(Color::WHITE),
-                ));
-            });
+            for slot in 0..SAVE_SLOTS {
+                let has_save = read_save(slot).is_some();
+                let label = if let Some(save) = read_save(slot) {
+                    format!("Load Slot {}: {:?}", slot + 1, save.quest_state)
+                } else {
+                    format!("Load Slot {} — Empty", slot + 1)
+                };
+                let bg = if has_save {
+                    Color::srgb(0.10, 0.18, 0.32)
+                } else {
+                    Color::srgb(0.08, 0.08, 0.14)
+                };
+                let text_color = if has_save { Color::WHITE } else { Color::srgb(0.4, 0.4, 0.4) };
+                root.spawn((
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(32.0), Val::Px(10.0)),
+                        min_width: Val::Px(260.0),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    BackgroundColor(bg),
+                    PauseMenuButton::LoadSlot(slot),
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        Text::new(label),
+                        TextFont { font_size: 20.0, ..default() },
+                        TextColor(text_color),
+                    ));
+                });
+            }
+
+            root.spawn(Node { height: Val::Px(8.0), ..default() });
+
+            spawn_text_button(root, "Back to Main Menu", Color::srgb(0.30, 0.10, 0.10), PauseMenuButton::BackToMenu);
         });
 }
 
@@ -264,6 +290,7 @@ fn handle_pause_menu_buttons(
     mut interaction_query: Query<(&Interaction, &PauseMenuButton), Changed<Interaction>>,
     mut next_state: ResMut<NextState<GameState>>,
     mut save_events: EventWriter<SaveGame>,
+    mut load_events: EventWriter<LoadGame>,
 ) {
     for (interaction, button) in &mut interaction_query {
         if *interaction != Interaction::Pressed {
@@ -273,8 +300,17 @@ fn handle_pause_menu_buttons(
             PauseMenuButton::SaveSlot(slot) => {
                 save_events.send(SaveGame(*slot));
             }
+            PauseMenuButton::LoadSlot(slot) => {
+                if read_save(*slot).is_some() {
+                    load_events.send(LoadGame(*slot));
+                    next_state.set(GameState::Playing);
+                }
+            }
             PauseMenuButton::Continue => {
                 next_state.set(GameState::Playing);
+            }
+            PauseMenuButton::BackToMenu => {
+                next_state.set(GameState::MainMenu);
             }
         }
     }

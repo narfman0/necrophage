@@ -8,6 +8,7 @@ bevy = { version = "0.15", features = ["dynamic_linking"] }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+dirs = "5"
 
 [features]
 default = ["debug"]

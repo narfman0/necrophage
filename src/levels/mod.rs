@@ -7,17 +7,38 @@ pub mod world;
 use bevy::prelude::*;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
+use bevy::ecs::system::SystemParam;
+
+use crate::biomass::{Biomass, BiomassTier};
 use crate::combat::{
     spawn_enemy, AttackMode, BossAI, Civilian, Elite, Enemy, Health, MobBoss, PatrolTimer,
 };
 use crate::dialogue::DialogueQueue;
+use crate::ending::{EndingPhase, FadeTimer};
 use crate::movement::GridPos;
 use crate::npc::{Liberator, LiberatorState, ScriptTimer};
 use crate::player::{ActiveEntity, Player};
+use crate::quest::{BossDefeated, EscapeFired, QuestState};
+use crate::swarm::{Swarm, SwarmMember};
 use crate::world::{
-    CurrentMap, GameRng, LevelEntity, PopulationDensity, Suspended,
+    CurrentMap, GameRng, LevelEntity, NewGame, PlayerDied, PopulationDensity, Suspended,
 };
 use crate::world::tile::{spawn_tile, tile_to_world, TileAssets};
+
+/// Bundle of all game-state resources reset during a new-game event.
+/// Keeps `handle_new_game` within Bevy's 16-parameter system limit.
+#[derive(SystemParam)]
+struct NewGameState<'w> {
+    biomass: ResMut<'w, Biomass>,
+    tier: ResMut<'w, BiomassTier>,
+    quest: ResMut<'w, QuestState>,
+    boss_defeated: ResMut<'w, BossDefeated>,
+    escape_fired: ResMut<'w, EscapeFired>,
+    player_died: ResMut<'w, PlayerDied>,
+    ending_phase: ResMut<'w, EndingPhase>,
+    fade_timer: ResMut<'w, FadeTimer>,
+    swarm: ResMut<'w, Swarm>,
+}
 use generator::LevelGenerator;
 use world::WorldGenerator;
 
@@ -71,6 +92,7 @@ impl Plugin for LevelPlugin {
         app.insert_resource(LevelSeed::default())
             .add_systems(Startup, seed_rng)
             .add_systems(PostStartup, generate_world)
+            .add_systems(Update, handle_new_game)
             .add_systems(
                 Update,
                 zone_suspend_system.run_if(in_state(crate::world::GameState::Playing)),
@@ -231,6 +253,180 @@ fn generate_world(
 
     commands.insert_resource(CurrentMap(map));
     println!("[LevelSeed] World seed: {}", seed.0);
+    dialogue.push("System", "The cell door is open. Escape.");
+}
+
+// ── New Game reset ────────────────────────────────────────────────────────────
+
+/// Handles the `NewGame` event: despawns all level entities and swarm members,
+/// resets every gameplay resource to its default, and regenerates the world.
+fn handle_new_game(
+    mut events: EventReader<NewGame>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    tile_assets: Res<TileAssets>,
+    seed: Res<LevelSeed>,
+    active: Res<ActiveEntity>,
+    level_entities: Query<Entity, With<LevelEntity>>,
+    swarm_members: Query<Entity, With<SwarmMember>>,
+    mut player_query: Query<(&mut GridPos, &mut Transform, &mut Health), With<Player>>,
+    mut liberator_query: Query<
+        (&mut GridPos, &mut Transform, &mut LiberatorState, &mut ScriptTimer),
+        (With<Liberator>, Without<Player>),
+    >,
+    mut state: NewGameState,
+    mut dialogue: ResMut<DialogueQueue>,
+    mut rng: ResMut<GameRng>,
+) {
+    if events.read().next().is_none() {
+        return;
+    }
+
+    // Despawn all level entities (tiles, enemies, lights, corpses, projectiles…).
+    for entity in &level_entities {
+        commands.entity(entity).despawn_recursive();
+    }
+    // Despawn spawned swarm members (not the original player body).
+    for entity in &swarm_members {
+        commands.entity(entity).despawn_recursive();
+    }
+
+    // Reset gameplay resources.
+    state.biomass.0 = 0.0;
+    *state.tier = BiomassTier::default();
+    *state.quest = QuestState::default();
+    state.boss_defeated.0 = false;
+    state.escape_fired.0 = false;
+    state.player_died.0 = false;
+    *state.ending_phase = EndingPhase::default();
+    state.fade_timer.0 = 0.0;
+
+    // Reset swarm — only the original player body remains.
+    state.swarm.members.clear();
+    state.swarm.members.push(active.0);
+    state.swarm.active_index = 0;
+
+    // Reset player HP.
+    if let Ok((_, _, mut hp)) = player_query.get_mut(active.0) {
+        hp.current = hp.max;
+    }
+
+    // Re-seed RNG and regenerate the world.
+    rng.0 = StdRng::seed_from_u64(seed.0);
+    let world_gen = WorldGenerator { seed: seed.0 };
+    let mut local_rng = StdRng::seed_from_u64(seed.0);
+    let (map, info) = world_gen.generate(&mut local_rng);
+
+    for (x, y, tile) in map.iter_tiles() {
+        let e = spawn_tile(&mut commands, &tile_assets, x, y, tile);
+        commands.entity(e).insert(LevelEntity);
+    }
+
+    if let Ok((mut ppos, mut ptf, _)) = player_query.get_mut(active.0) {
+        ppos.x = info.player_start.0;
+        ppos.y = info.player_start.1;
+        ptf.translation = tile_to_world(ppos.x, ppos.y) + Vec3::new(0.0, 0.5, 0.0);
+    }
+
+    if let Some((lx, ly)) = info.liberator_start {
+        if let Ok((mut lpos, mut ltf, mut lstate, mut ltimer)) = liberator_query.get_single_mut() {
+            lpos.x = lx;
+            lpos.y = ly;
+            ltf.translation = tile_to_world(lx, ly) + Vec3::new(0.0, 0.5, 0.0);
+            *lstate = LiberatorState::AwaitingPlayer;
+            ltimer.0 = 0.0;
+        }
+    }
+
+    for &(gx, gy) in &info.guard_positions {
+        let Some((wx, wy)) = find_walkable_near(&map, gx, gy) else { continue };
+        let e = spawn_enemy(&mut commands, &mut meshes, &mut materials,
+            GridPos { x: wx, y: wy }, 25.0, 8.0, Color::srgb(0.7, 0.5, 0.1));
+        commands.entity(e).insert(LevelEntity);
+    }
+
+    for &(ex, ey) in &info.enemy_positions {
+        let Some((wx, wy)) = find_walkable_near(&map, ex, ey) else { continue };
+        let mode = if local_rng.gen_bool(0.5) { AttackMode::Ranged } else { AttackMode::Melee };
+        let e = spawn_enemy(&mut commands, &mut meshes, &mut materials,
+            GridPos { x: wx, y: wy }, 20.0, 6.0, Color::srgb(0.8, 0.2, 0.2));
+        commands.entity(e).insert(mode).insert(LevelEntity);
+    }
+
+    for &(ex, ey) in &info.elite_positions {
+        let Some((wx, wy)) = find_walkable_near(&map, ex, ey) else { continue };
+        let e = spawn_enemy(&mut commands, &mut meshes, &mut materials,
+            GridPos { x: wx, y: wy }, 80.0, 15.0, Color::srgb(0.9, 0.4, 0.0));
+        commands.entity(e).insert(Elite).insert(LevelEntity);
+    }
+
+    if let Some((bx, by)) = info.boss_position {
+        if let Some((wx, wy)) = find_walkable_near(&map, bx, by) {
+            let e = spawn_enemy(&mut commands, &mut meshes, &mut materials,
+                GridPos { x: wx, y: wy }, 300.0, 20.0, Color::srgb(0.6, 0.0, 0.8));
+            commands.entity(e).insert(MobBoss).insert(BossAI::default()).insert(LevelEntity);
+        }
+    }
+
+    for &(cx, cy) in &info.civilian_positions {
+        let Some((wx, wy)) = find_walkable_near(&map, cx, cy) else { continue };
+        commands.spawn((
+            Civilian,
+            GridPos { x: wx, y: wy },
+            Health::new(10.0),
+            PatrolTimer(0.0),
+            Mesh3d(meshes.add(Capsule3d::new(0.25, 0.5))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.8, 0.8, 0.6),
+                ..default()
+            })),
+            Transform::from_xyz(wx as f32, 0.5, wy as f32),
+            LevelEntity,
+        ));
+    }
+
+    for &(lx, ly) in &info.streetlight_positions {
+        commands.spawn((
+            PointLight {
+                color: Color::srgb(1.0, 0.9, 0.6),
+                intensity: 20_000.0,
+                range: 12.0,
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::from_xyz(lx as f32, 3.0, ly as f32),
+            LevelEntity,
+        ));
+    }
+
+    let cell_positions = [(3i32, 3i32), (3, 7), (15, 3), (15, 12)];
+    for (lx, ly) in cell_positions {
+        commands.spawn((
+            PointLight {
+                color: Color::srgb(0.7, 0.75, 1.0),
+                intensity: 6_000.0,
+                radius: 0.5,
+                range: 5.0,
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::from_xyz(lx as f32, 2.0, ly as f32),
+            LevelEntity,
+        ));
+    }
+
+    let total_pop = (info.enemy_positions.len()
+        + info.elite_positions.len()
+        + info.civilian_positions.len()) as i32;
+    commands.insert_resource(PopulationDensity {
+        current: total_pop,
+        max: total_pop,
+        boss_spawned: true,
+    });
+
+    commands.insert_resource(CurrentMap(map));
+    println!("[LevelSeed] New game started with seed: {}", seed.0);
     dialogue.push("System", "The cell door is open. Escape.");
 }
 

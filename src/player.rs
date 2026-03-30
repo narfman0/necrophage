@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::camera::CameraTarget;
 use crate::combat::{Attack, Health};
 use crate::movement::{Body, Dash, DashTrailTimer, GridPos, MoveDir};
+use crate::world::Friendly;
 
 #[derive(Component)]
 pub struct Player;
@@ -27,6 +28,7 @@ fn spawn_player(
     let player = commands
         .spawn((
             Player,
+            Friendly,
             Body,
             start,
             MoveDir::default(),

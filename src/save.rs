@@ -27,7 +27,13 @@ pub struct SaveData {
 }
 
 fn save_path(slot: usize) -> PathBuf {
-    PathBuf::from(format!("saves/save_{}.json", slot))
+    // Store saves in the platform data directory: e.g. on Windows
+    // %APPDATA%\necrophage\saves\, on Linux ~/.local/share/necrophage/saves/.
+    let base = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("necrophage")
+        .join("saves");
+    base.join(format!("save_{}.json", slot))
 }
 
 pub fn write_save(slot: usize, data: &SaveData) -> Result<(), String> {
@@ -133,7 +139,10 @@ mod tests {
 
     #[test]
     fn save_path_format() {
-        assert_eq!(save_path(0).to_str().unwrap(), "saves/save_0.json");
-        assert_eq!(save_path(3).to_str().unwrap(), "saves/save_3.json");
+        let p0 = save_path(0);
+        let p3 = save_path(3);
+        assert!(p0.to_str().unwrap().ends_with("save_0.json"));
+        assert!(p3.to_str().unwrap().ends_with("save_3.json"));
+        assert!(p0.to_str().unwrap().contains("necrophage"));
     }
 }

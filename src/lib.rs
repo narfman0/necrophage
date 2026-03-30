@@ -276,7 +276,7 @@ pub mod hud {
                     TextColor(Color::srgb(0.9, 0.1, 0.1)),
                 ));
                 p.spawn((
-                    Text::new("Press any key to exit"),
+                    Text::new("Press any key to return to menu"),
                     TextFont {
                         font_size: 22.0,
                         ..default()
@@ -287,13 +287,14 @@ pub mod hud {
     }
 
     pub fn drive_you_died_overlay(
-        player_died: Res<PlayerDied>,
+        mut player_died: ResMut<PlayerDied>,
         state: Res<State<GameState>>,
         mut overlay: Query<&mut Visibility, With<YouDiedOverlay>>,
         keys: Res<ButtonInput<KeyCode>>,
         buttons: Res<ButtonInput<MouseButton>>,
         time: Res<Time>,
         mut elapsed: Local<f32>,
+        mut next_state: ResMut<NextState<GameState>>,
     ) {
         let Ok(mut vis) = overlay.get_single_mut() else {
             return;
@@ -305,8 +306,13 @@ pub mod hud {
                 && (keys.get_just_pressed().next().is_some()
                     || buttons.get_just_pressed().next().is_some())
             {
-                std::process::exit(0);
+                *vis = Visibility::Hidden;
+                *elapsed = 0.0;
+                player_died.0 = false;
+                next_state.set(GameState::MainMenu);
             }
+        } else {
+            *vis = Visibility::Hidden;
         }
     }
 

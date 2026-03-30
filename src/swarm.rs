@@ -8,7 +8,7 @@ use crate::combat::{
 };
 use crate::movement::{AttackRecovery, Body, GridPos, MoveDir};
 use crate::player::{ActiveEntity, Player};
-use crate::world::{CurrentMap, GameState};
+use crate::world::{CurrentMap, Friendly, GameState};
 
 // ── Components ────────────────────────────────────────────────────────────────
 
@@ -688,6 +688,7 @@ fn spawn_swarm_creature(
     commands
         .spawn((
             SwarmMember { kind, biomass_cost: cost },
+            Friendly,
             Body,
             pos,
             MoveDir::default(),

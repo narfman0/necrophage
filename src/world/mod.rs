@@ -14,6 +14,11 @@ pub struct CurrentMap(pub TileMap);
 #[derive(Component)]
 pub struct LevelEntity;
 
+/// Marker component for player and swarm-member entities. Used by enemy AI to
+/// identify valid targets without creating a circular dependency on swarm.rs.
+#[derive(Component)]
+pub struct Friendly;
+
 /// Marker component — entity is too far from the player for AI to be active.
 /// Inserted/removed by zone_suspend_system in levels/mod.rs.
 #[derive(Component)]
@@ -67,6 +72,11 @@ pub struct PopulationDensity {
 #[derive(Resource, Default)]
 pub struct PlayerDied(pub bool);
 
+/// Fired when the player chooses "New Game" from the main menu.
+/// Systems across the codebase listen to this to reset their state.
+#[derive(Event)]
+pub struct NewGame;
+
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
@@ -78,6 +88,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<PlayerSpeedBonus>()
             .init_resource::<PopulationDensity>()
             .init_resource::<PlayerDied>()
+            .add_event::<NewGame>()
             .register_type::<PlayerSpeedBonus>()
             .register_type::<PopulationDensity>()
             .init_state::<GameState>();
