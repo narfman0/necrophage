@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::biomass::{Biomass, BiomassTier};
 use crate::camera::CameraTarget;
 use crate::combat::{
-    Attack, AttackMode, Corpse, DamageEvent, Dying, Enemy, EntityDied, EntityPath, Health,
+    Attack, AttackMode, Civilian, Corpse, DamageEvent, Dying, Enemy, EntityDied, EntityPath, Health,
     HpBar, HpBarRoot, has_line_of_sight, spawn_projectile,
 };
 use crate::movement::{AttackRecovery, Body, GridPos, MoveDir};
@@ -257,7 +257,7 @@ fn strong_attack_system(
     active: Res<ActiveEntity>,
     active_query: Query<(&Transform, &GridPos)>,
     mut attackers: Query<(&mut StrongAttack, Option<&AttackMode>)>,
-    targets: Query<(Entity, &Transform), With<Enemy>>,
+    targets: Query<(Entity, &Transform), Or<(With<Enemy>, With<Civilian>)>>,
     tier: Res<BiomassTier>,
     mut damage_events: EventWriter<DamageEvent>,
 ) {

@@ -15,7 +15,7 @@ use crate::combat::{
 };
 use crate::dialogue::DialogueQueue;
 use crate::ending::{EndingPhase, FadeTimer};
-use crate::movement::GridPos;
+use crate::movement::{Body, GridPos};
 use crate::npc::{Liberator, LiberatorState, ScriptTimer};
 use crate::player::{ActiveEntity, Player};
 use crate::quest::{BossDefeated, EscapeFired, QuestState};
@@ -195,6 +195,7 @@ fn generate_world(
         let Some((wx, wy)) = find_walkable_near(&map, cx, cy) else { continue };
         commands.spawn((
             Civilian,
+            Body,
             GridPos { x: wx, y: wy },
             Health::new(10.0),
             PatrolTimer(0.0),
@@ -373,6 +374,7 @@ fn handle_new_game(
         let Some((wx, wy)) = find_walkable_near(&map, cx, cy) else { continue };
         commands.spawn((
             Civilian,
+            Body,
             GridPos { x: wx, y: wy },
             Health::new(10.0),
             PatrolTimer(0.0),

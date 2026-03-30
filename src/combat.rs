@@ -269,6 +269,7 @@ impl Plugin for CombatPlugin {
                     update_floating_numbers,
                     spawn_hit_flash,
                     hit_flash_system,
+                    civilian_flee_on_damage,
                 )
                 .run_if(in_state(GameState::Playing)),
             )
@@ -587,7 +588,7 @@ fn player_attack_system(
     active_query: Query<(&Transform, &GridPos)>,
     mut attackers: Query<&mut Attack>,
     attack_modes: Query<&AttackMode>,
-    targets: Query<(Entity, &Transform), With<Enemy>>,
+    targets: Query<(Entity, &Transform), Or<(With<Enemy>, With<Civilian>)>>,
     tier: Res<BiomassTier>,
     mut damage_events: EventWriter<DamageEvent>,
 ) {
@@ -968,6 +969,18 @@ fn civilian_flee_system(
             pos.x += dx;
         } else if dy != 0 && map.0.is_walkable(pos.x, pos.y + dy) {
             pos.y += dy;
+        }
+    }
+}
+
+/// When a civilian takes damage, reset their move timer so they flee immediately.
+fn civilian_flee_on_damage(
+    mut events: EventReader<DamageEvent>,
+    mut civilians: Query<&mut PatrolTimer, With<Civilian>>,
+) {
+    for ev in events.read() {
+        if let Ok(mut timer) = civilians.get_mut(ev.target) {
+            timer.0 = 0.0;
         }
     }
 }
