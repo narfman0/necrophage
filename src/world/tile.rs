@@ -25,9 +25,7 @@ pub struct TileAssets {
     pub wall_mesh: Handle<Mesh>,
     pub wall_material: Handle<StandardMaterial>,
     pub floor_mesh: Handle<Mesh>,
-    /// 16-shade palette for deterministic per-tile floor variation.
-    /// Index with `(tile_hash & 0xF) as usize`.
-    pub floor_materials: [Handle<StandardMaterial>; 16],
+    pub floor_material: Handle<StandardMaterial>,
     pub door_mesh: Handle<Mesh>,
     pub door_material: Handle<StandardMaterial>,
     pub exit_mesh: Handle<Mesh>,
@@ -46,30 +44,37 @@ impl FromWorld for TileAssets {
             )
         };
 
+        let (wall_tex, floor_tex, door_tex, exit_tex) = {
+            let asset_server = world.resource::<AssetServer>();
+            (
+                asset_server.load("textures/prototype/Dark/texture_02.png"),
+                asset_server.load("textures/prototype/Light/texture_02.png"),
+                asset_server.load("textures/prototype/Orange/texture_02.png"),
+                asset_server.load("textures/prototype/Green/texture_02.png"),
+            )
+        };
+
         let mut mats = world.resource_mut::<Assets<StandardMaterial>>();
         let wall_material = mats.add(StandardMaterial {
-            base_color: Color::srgb(0.2, 0.2, 0.2),
+            base_color_texture: Some(wall_tex),
             perceptual_roughness: 0.7,
             metallic: 0.1,
             ..Default::default()
         });
-        let floor_materials: [Handle<StandardMaterial>; 16] = std::array::from_fn(|i| {
-            let shade = 0.42 + i as f32 / 15.0 * 0.06;
-            mats.add(StandardMaterial {
-                base_color: Color::srgb(shade, shade, shade),
-                perceptual_roughness: 0.9,
-                metallic: 0.0,
-                ..Default::default()
-            })
+        let floor_material = mats.add(StandardMaterial {
+            base_color_texture: Some(floor_tex),
+            perceptual_roughness: 0.9,
+            metallic: 0.0,
+            ..Default::default()
         });
         let door_material = mats.add(StandardMaterial {
-            base_color: Color::srgb(0.55, 0.35, 0.1),
+            base_color_texture: Some(door_tex),
             perceptual_roughness: 0.8,
             metallic: 0.0,
             ..Default::default()
         });
         let exit_material = mats.add(StandardMaterial {
-            base_color: Color::srgb(0.1, 0.8, 0.3),
+            base_color_texture: Some(exit_tex),
             perceptual_roughness: 0.9,
             metallic: 0.0,
             ..Default::default()
@@ -79,7 +84,7 @@ impl FromWorld for TileAssets {
             wall_mesh,
             wall_material,
             floor_mesh,
-            floor_materials,
+            floor_material,
             door_mesh,
             door_material,
             exit_mesh,
@@ -99,19 +104,13 @@ pub fn spawn_tile(
 ) -> Entity {
     let pos = tile_to_world(x, y);
     match tile_type {
-        TileType::Floor => {
-            // Deterministic shade index — same tile always gets the same shade.
-            let hash = (x as u32).wrapping_mul(2_654_435_761u32)
-                ^ (y as u32).wrapping_mul(1_013_904_223u32);
-            let mat = tile_assets.floor_materials[(hash & 0xF) as usize].clone();
-            commands
-                .spawn((
-                    Mesh3d(tile_assets.floor_mesh.clone()),
-                    MeshMaterial3d(mat),
-                    Transform::from_translation(pos + Vec3::new(0.0, -0.05, 0.0)),
-                ))
-                .id()
-        }
+        TileType::Floor => commands
+            .spawn((
+                Mesh3d(tile_assets.floor_mesh.clone()),
+                MeshMaterial3d(tile_assets.floor_material.clone()),
+                Transform::from_translation(pos + Vec3::new(0.0, -0.05, 0.0)),
+            ))
+            .id(),
         TileType::Wall => commands
             .spawn((
                 Mesh3d(tile_assets.wall_mesh.clone()),
@@ -158,14 +157,4 @@ mod tests {
         assert!(!TileType::Wall.is_walkable());
     }
 
-    #[test]
-    fn floor_shade_palette_index_in_range() {
-        // Any tile position must map to a valid palette index (0..16).
-        for (x, y) in [(0i32, 0i32), (100, 200), (-1, -1), (i32::MAX, i32::MIN)] {
-            let hash = (x as u32).wrapping_mul(2_654_435_761u32)
-                ^ (y as u32).wrapping_mul(1_013_904_223u32);
-            let idx = (hash & 0xF) as usize;
-            assert!(idx < 16, "index {idx} out of range for ({x},{y})");
-        }
-    }
 }
