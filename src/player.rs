@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::camera::CameraTarget;
 use crate::combat::{Attack, Health};
-use crate::movement::{Body, Dash, GridPos, MoveDir};
+use crate::movement::{Body, Dash, DashTrailTimer, GridPos, MoveDir};
 
 #[derive(Component)]
 pub struct Player;
@@ -31,6 +31,7 @@ fn spawn_player(
             start,
             MoveDir::default(),
             Dash::default(),
+            DashTrailTimer(0.0),
             Health::new(50.0),
             Attack::new(10.0, 0.5),
             Mesh3d(meshes.add(Capsule3d::new(0.12, 0.18))),

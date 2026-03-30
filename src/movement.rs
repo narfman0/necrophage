@@ -18,19 +18,19 @@ pub struct GridPos {
 pub struct MoveDir(pub Vec2);
 
 /// Movement speed in world units per second.
-const MOVE_SPEED: f32 = 7.0;
+const MOVE_SPEED: f32 = 7.5;
 /// Entity collision radius in world units (wall collision + body separation).
 pub const ENTITY_RADIUS: f32 = 0.35;
 /// Walk speed for non-player entities (enemies / NPCs) in world units/sec.
 const WALK_SPEED: f32 = 2.5;
 /// Speed multiplier during a dash.
-const DASH_SPEED: f32 = 22.0;
+const DASH_SPEED: f32 = 26.0;
 /// How long a dash lasts in seconds.
-const DASH_DURATION: f32 = 0.15;
+const DASH_DURATION: f32 = 0.12;
 /// Cooldown between dashes in seconds.
 const DASH_COOLDOWN: f32 = 0.8;
 /// How long the post-dash recovery slow lasts in seconds.
-const DASH_RECOVERY_SLOW: f32 = 0.5;
+const DASH_RECOVERY_SLOW: f32 = 0.3;
 /// Speed multiplier during post-dash recovery.
 const DASH_RECOVERY_MULT: f32 = 0.4;
 
@@ -56,6 +56,19 @@ pub struct Dash {
 #[derive(Component, Reflect)]
 pub struct AttackRecovery(pub f32);
 
+/// Cooldown timer controlling how often dash ghost copies are spawned.
+/// Reset to zero each time the player is not dashing so the first frame fires immediately.
+#[derive(Component)]
+pub struct DashTrailTimer(pub f32);
+
+/// A brief translucent ghost copy of the player spawned during a dash.
+/// Scales to zero over `timer` seconds and then despawns.
+#[derive(Component)]
+struct DashGhost {
+    timer: f32,
+    max_timer: f32,
+}
+
 pub struct MovementPlugin;
 
 impl Plugin for MovementPlugin {
@@ -74,6 +87,8 @@ impl Plugin for MovementPlugin {
                     tick_attack_recovery.after(tick_dash),
                     apply_movement.after(tick_attack_recovery),
                     separate_entities.after(apply_movement),
+                    spawn_dash_trail.after(tick_dash),
+                    tick_dash_ghosts,
                 )
                 .run_if(in_state(GameState::Playing)),
             )
@@ -283,6 +298,58 @@ fn separate_entities(
     }
 }
 
+
+/// Spawns a brief cyan ghost copy of the player during each dash.
+/// The ghost's scale decays to zero over its lifetime via `tick_dash_ghosts`.
+fn spawn_dash_trail(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut query: Query<(&Dash, &mut DashTrailTimer, &Transform), With<crate::player::Player>>,
+    time: Res<Time>,
+) {
+    const GHOST_INTERVAL: f32 = 0.04;
+    const GHOST_LIFETIME: f32 = 0.2;
+
+    let Ok((dash, mut trail_timer, transform)) = query.get_single_mut() else { return };
+
+    if dash.active > 0.0 {
+        trail_timer.0 -= time.delta_secs();
+        if trail_timer.0 <= 0.0 {
+            trail_timer.0 = GHOST_INTERVAL;
+            commands.spawn((
+                DashGhost { timer: GHOST_LIFETIME, max_timer: GHOST_LIFETIME },
+                Mesh3d(meshes.add(Capsule3d::new(0.12, 0.18))),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgba(0.1, 0.9, 1.0, 0.5),
+                    emissive: LinearRgba::new(0.0, 2.0, 4.0, 1.0),
+                    alpha_mode: AlphaMode::Blend,
+                    ..default()
+                })),
+                *transform,
+            ));
+        }
+    } else {
+        trail_timer.0 = 0.0;
+    }
+}
+
+/// Ticks down each DashGhost, shrinking its scale, and despawns it when expired.
+fn tick_dash_ghosts(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut DashGhost, &mut Transform)>,
+    time: Res<Time>,
+) {
+    for (entity, mut ghost, mut transform) in &mut query {
+        ghost.timer -= time.delta_secs();
+        if ghost.timer <= 0.0 {
+            commands.entity(entity).despawn();
+        } else {
+            let progress = ghost.timer / ghost.max_timer;
+            transform.scale = Vec3::splat(progress);
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

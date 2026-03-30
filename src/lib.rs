@@ -96,6 +96,7 @@ pub fn run() {
             hud::spawn_density_hud,
             hud::spawn_player_hp_hud,
             hud::spawn_you_died_overlay,
+            hud::spawn_damage_vignette,
         ),
     )
     .add_systems(
@@ -105,6 +106,7 @@ pub fn run() {
             hud::update_density_hud,
             hud::update_player_hp_hud,
             hud::drive_you_died_overlay,
+            hud::drive_damage_vignette,
         ),
     );
 
@@ -120,7 +122,7 @@ pub mod hud {
     use bevy::prelude::*;
 
     use crate::biomass::BiomassDisplay;
-    use crate::combat::Health;
+    use crate::combat::{DamageEvent, Health};
     use crate::player::ActiveEntity;
     use crate::quest::QuestState;
     use crate::world::{GameState, PlayerDied, PopulationDensity};
@@ -136,6 +138,10 @@ pub mod hud {
 
     #[derive(Component)]
     pub struct YouDiedOverlay;
+
+    /// Full-screen red overlay that pulses when the player takes damage.
+    #[derive(Component)]
+    pub struct DamageVignette;
 
     pub fn spawn_biomass_hud(mut commands: Commands) {
         commands.spawn((
@@ -302,6 +308,37 @@ pub mod hud {
                 std::process::exit(0);
             }
         }
+    }
+
+    pub fn spawn_damage_vignette(mut commands: Commands) {
+        commands.spawn((
+            DamageVignette,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.6, 0.0, 0.0, 0.0)),
+            ZIndex(50),
+        ));
+    }
+
+    pub fn drive_damage_vignette(
+        active: Res<ActiveEntity>,
+        mut events: EventReader<DamageEvent>,
+        mut vignette: Query<&mut BackgroundColor, With<DamageVignette>>,
+        time: Res<Time>,
+        mut alpha: Local<f32>,
+    ) {
+        let Ok(mut bg) = vignette.get_single_mut() else { return };
+        for ev in events.read() {
+            if ev.target == active.0 {
+                *alpha = 0.55_f32.max(*alpha);
+            }
+        }
+        *alpha = (*alpha - time.delta_secs() * 2.5).max(0.0);
+        bg.0 = Color::srgba(0.6, 0.0, 0.0, *alpha);
     }
 
     pub fn update_quest_hud(

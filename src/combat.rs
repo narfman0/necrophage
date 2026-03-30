@@ -8,6 +8,11 @@ use crate::movement::{AttackRecovery, Body, GridPos, MoveDir, WALK_ARRIVAL_DIST}
 use crate::player::{ActiveEntity, Player};
 use crate::world::{map::TileMap, tile::TileType, CurrentMap, GameRng, GameState, LevelEntity, PlayerDied, Suspended};
 
+/// Freezes virtual time briefly on heavy hits for impactful feel.
+/// Systems that read `Time<Real>` are unaffected; all others pause.
+#[derive(Resource, Default)]
+pub struct HitstopTimer(pub f32);
+
 // ── Components ───────────────────────────────────────────────────────────────
 
 #[derive(Component, Clone, Reflect)]
@@ -86,13 +91,26 @@ pub struct LostTimer(pub f32);
 #[derive(Component)]
 pub struct Invincible;
 
-/// One-frame knockback marker: push the entity one tile away from the attacker.
-/// Applied by `apply_damage`, consumed immediately by `knockback_system`.
+/// Velocity-based knockback push. Applied by `apply_damage`, animated by `knockback_system`.
+/// GridPos is snapped to the destination tile on the first tick; Transform is animated.
 #[derive(Component)]
 pub struct Knockback {
-    pub dx: i32,
-    pub dy: i32,
+    /// World-space XZ impulse velocity (decays with exponential drag).
+    pub vel: Vec2,
+    /// Remaining seconds; remove component when this reaches zero.
+    pub timer: f32,
+    /// Whether the GridPos has already been snapped to the destination tile.
+    pub pos_updated: bool,
 }
+
+/// Brief emissive flash applied to an entity when it takes damage.
+/// White for the player, orange for enemies. Removed after `timer` expires.
+#[derive(Component)]
+struct HitFlash(f32);
+
+/// Saves the entity's original emissive color so it can be restored after a HitFlash.
+#[derive(Component)]
+struct OriginalEmissive(LinearRgba);
 
 /// Marks an entity that has died but not yet been consumed.
 /// The player presses E nearby to consume it, granting biomass and triggering dissolution.
@@ -135,7 +153,7 @@ const RANGED_ATTACK_RANGE: f32 = 7.0;
 /// Ranged enemies stop chasing when they reach this distance (world units).
 const RANGED_STOP_DIST: f32 = 6.0;
 /// Speed of fired projectiles in world units per second.
-const PROJECTILE_SPEED: f32 = 9.0;
+const PROJECTILE_SPEED: f32 = 12.0;
 /// Despawn projectile when this close to its target (world units).
 const PROJECTILE_HIT_DIST: f32 = 0.4;
 
@@ -203,6 +221,7 @@ impl Plugin for CombatPlugin {
         app.add_event::<DamageEvent>()
             .add_event::<EntityDied>()
             .add_event::<AlertEvent>()
+            .init_resource::<HitstopTimer>()
             .register_type::<Health>()
             .register_type::<Attack>()
             .register_type::<EnemyAI>()
@@ -221,6 +240,7 @@ impl Plugin for CombatPlugin {
                     boss_ai_system,
                     player_attack_system,
                     apply_damage,
+                    trigger_hitstop.after(apply_damage),
                     death_system.after(apply_damage),
                     dissolve_system.after(death_system),
                     knockback_system.after(death_system),
@@ -237,9 +257,14 @@ impl Plugin for CombatPlugin {
                 (
                     spawn_damage_numbers,
                     update_floating_numbers,
+                    spawn_hit_flash,
+                    hit_flash_system,
                 )
                 .run_if(in_state(GameState::Playing)),
-            );
+            )
+            // hitstop must run unconditionally so it can restore virtual time
+            // even after a state transition (e.g. GameOver).
+            .add_systems(Update, hitstop_system);
     }
 }
 
@@ -599,13 +624,17 @@ pub fn apply_damage(
         if let Ok(mut hp) = health_query.get_mut(ev.target) {
             hp.current -= ev.amount;
         }
-        // Insert one-frame knockback away from the attacker.
+        // Insert knockback component (GridPos + visual animation handled by knockback_system).
         if let Some(src) = ev.attacker_pos {
             if let Ok(target_pos) = positions.get(ev.target) {
                 let dx = (target_pos.x - src.x).signum();
                 let dy = (target_pos.y - src.y).signum();
                 if dx != 0 || dy != 0 {
-                    commands.entity(ev.target).insert(Knockback { dx, dy });
+                    commands.entity(ev.target).insert(Knockback {
+                        vel: Vec2::new(dx as f32, dy as f32) * 6.0,
+                        timer: 0.18,
+                        pos_updated: false,
+                    });
                 }
             }
             // Emit alert at the combat location so nearby enemies react.
@@ -614,21 +643,111 @@ pub fn apply_damage(
     }
 }
 
-/// Immediately pushes the entity one tile in the knockback direction (if walkable),
-/// then removes the component. Runs after death_system so dead entities are skipped.
+/// Triggers a brief virtual-time freeze when the player takes a meaningful hit.
+fn trigger_hitstop(
+    mut events: EventReader<DamageEvent>,
+    active: Res<ActiveEntity>,
+    mut hitstop: ResMut<HitstopTimer>,
+) {
+    for ev in events.read() {
+        if ev.target == active.0 && ev.amount > 3.0 {
+            hitstop.0 = hitstop.0.max(0.08);
+        }
+    }
+}
+
+/// Applies an emissive flash to any entity that just took damage.
+/// Kept separate from `apply_damage` so tests using minimal apps are unaffected.
+fn spawn_hit_flash(
+    mut commands: Commands,
+    mut events: EventReader<DamageEvent>,
+    material_handles: Query<&MeshMaterial3d<StandardMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    players: Query<(), With<Player>>,
+) {
+    for ev in events.read() {
+        if let Ok(mat_handle) = material_handles.get(ev.target) {
+            if let Some(mat) = materials.get_mut(mat_handle.id()) {
+                let original = mat.emissive;
+                let flash_color = if players.get(ev.target).is_ok() {
+                    LinearRgba::new(8.0, 8.0, 8.0, 1.0)
+                } else {
+                    LinearRgba::new(4.0, 1.5, 0.0, 1.0)
+                };
+                mat.emissive = flash_color;
+                commands.entity(ev.target)
+                    .insert(HitFlash(0.12))
+                    .insert(OriginalEmissive(original));
+            }
+        }
+    }
+}
+
+fn hitstop_system(
+    mut hitstop: ResMut<HitstopTimer>,
+    mut vtime: ResMut<Time<Virtual>>,
+    real_time: Res<Time<Real>>,
+) {
+    if hitstop.0 > 0.0 {
+        hitstop.0 -= real_time.delta_secs();
+        vtime.set_relative_speed(0.05);
+    } else {
+        hitstop.0 = 0.0;
+        vtime.set_relative_speed(1.0);
+    }
+}
+
+/// Ticks down HitFlash timers and restores the original emissive color when they expire.
+fn hit_flash_system(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut HitFlash, &MeshMaterial3d<StandardMaterial>, &OriginalEmissive)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    time: Res<Time>,
+) {
+    for (entity, mut flash, mat_handle, original) in &mut query {
+        flash.0 -= time.delta_secs();
+        if flash.0 <= 0.0 {
+            if let Some(mat) = materials.get_mut(mat_handle.id()) {
+                mat.emissive = original.0;
+            }
+            commands.entity(entity).remove::<HitFlash>().remove::<OriginalEmissive>();
+        }
+    }
+}
+
+/// Pushes the entity in the knockback direction (GridPos + animated Transform).
+/// Runs after death_system so dead entities are skipped.
 fn knockback_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut GridPos, &Knockback)>,
+    mut query: Query<(Entity, &mut GridPos, &mut Transform, &mut Knockback)>,
     map: Res<CurrentMap>,
+    time: Res<Time>,
 ) {
-    for (entity, mut pos, kb) in &mut query {
-        let nx = pos.x + kb.dx;
-        let ny = pos.y + kb.dy;
-        if map.0.is_walkable(nx, ny) {
-            pos.x = nx;
-            pos.y = ny;
+    let dt = time.delta_secs();
+    for (entity, mut pos, mut transform, mut kb) in &mut query {
+        // Snap GridPos to the destination tile exactly once.
+        if !kb.pos_updated {
+            kb.pos_updated = true;
+            let dx = kb.vel.x.signum() as i32;
+            let dy = kb.vel.y.signum() as i32;
+            let nx = pos.x + dx;
+            let ny = pos.y + dy;
+            if map.0.is_walkable(nx, ny) {
+                pos.x = nx;
+                pos.y = ny;
+            }
         }
-        commands.entity(entity).remove::<Knockback>();
+
+        kb.timer -= dt;
+        if kb.timer <= 0.0 {
+            commands.entity(entity).remove::<Knockback>();
+            continue;
+        }
+        // Apply velocity and exponentially decay it (drag).
+        transform.translation.x += kb.vel.x * dt;
+        transform.translation.z += kb.vel.y * dt;
+        let drag = (-10.0_f32 * dt).exp();
+        kb.vel *= drag;
     }
 }
 
@@ -831,7 +950,7 @@ fn update_hp_bars(
 }
 
 /// Amount of HP restored per enemy kill.
-const KILL_HEAL: f32 = 5.0;
+const KILL_HEAL: f32 = 3.0;
 
 fn heal_on_kill(
     mut events: EventReader<EntityDied>,
@@ -918,7 +1037,7 @@ pub fn spawn_enemy(
             LostTimer(LOST_TIMEOUT),
             pos,
             Health::new(hp),
-            Attack::new(damage, 1.2),
+            Attack::new(damage, 1.0),
             HpBar(bar_entity),
             EntityPath::default(),
             Mesh3d(meshes.add(Capsule3d::new(0.3, 0.6))),
