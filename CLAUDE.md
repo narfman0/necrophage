@@ -8,8 +8,8 @@ Isometric action RPG. Rust + Bevy **0.15**. Orthographic 3D camera — do not ch
 cargo check                          # verify compilation
 cargo check --features debug         # also check debug feature
 cargo test                           # run all tests
-cargo run                            # debug build (debug tools on by default)
-cargo run --release                  # release build (debug tools stripped)
+cargo run --bin necrophage           # debug build (debug tools on by default)
+cargo run --bin necrophage --release # release build (debug tools stripped)
 ```
 
 Zero errors, zero warnings is the bar. Always run both `cargo check` calls before considering a task done.
@@ -28,7 +28,7 @@ Zero errors, zero warnings is the bar. Always run both `cargo check` calls befor
 ## Don't
 
 - **Don't use `cd` in bash commands.** Always pass the path explicitly.
-- **For git, ALWAYS use `git -C C:/Users/narfman0/workspace/necrophage <command>`.** Never `cd` first.
+- **For git, ALWAYS use `git -C <project_path> <command>`.** Never `cd` first.
 - **Don't use `rand::thread_rng()` in systems.**
 - **Don't leave dead code or unused imports.**
 
