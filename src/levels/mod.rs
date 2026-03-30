@@ -439,8 +439,8 @@ fn handle_new_game(
 fn zone_suspend_system(
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos, With<Player>>,
-    enemies: Query<(Entity, &GridPos, Option<&Suspended>), With<Enemy>>,
-    civilians: Query<(Entity, &GridPos, Option<&Suspended>), (With<Civilian>, Without<Enemy>)>,
+    enemies: Query<(Entity, &GridPos, Option<&Suspended>), (With<Enemy>, Without<crate::combat::Dying>, Without<crate::combat::Corpse>)>,
+    civilians: Query<(Entity, &GridPos, Option<&Suspended>), (With<Civilian>, Without<Enemy>, Without<crate::combat::Dying>, Without<crate::combat::Corpse>)>,
     mut commands: Commands,
 ) {
     let Ok(ppos) = player_pos.get(active.0) else { return };
