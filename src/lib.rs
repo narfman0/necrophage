@@ -4,12 +4,14 @@ pub mod combat;
 pub mod dialogue;
 pub mod ending;
 pub mod levels;
+pub mod menu;
 pub mod minimap;
 pub mod movement;
 pub mod npc;
 pub mod player;
 pub mod population;
 pub mod quest;
+pub mod save;
 pub mod swarm;
 pub mod world;
 
@@ -20,12 +22,14 @@ use combat::CombatPlugin;
 use dialogue::DialoguePlugin;
 use ending::EndingPlugin;
 use levels::LevelPlugin;
+use menu::{MainMenuPlugin, PauseMenuPlugin};
 use minimap::MinimapPlugin;
 use movement::MovementPlugin;
 use npc::NpcPlugin;
 use player::PlayerPlugin;
 use population::PopulationPlugin;
 use quest::QuestPlugin;
+use save::SavePlugin;
 use swarm::SwarmPlugin;
 
 pub struct NecrophagePlugin;
@@ -48,6 +52,7 @@ impl Plugin for NecrophagePlugin {
             MinimapPlugin,
             SwarmPlugin,
         ));
+        app.add_plugins((SavePlugin, MainMenuPlugin, PauseMenuPlugin));
     }
 }
 

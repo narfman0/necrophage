@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::combat::Health;
 use crate::movement::GridPos;
@@ -8,7 +9,7 @@ use crate::world::{GameState, PlayerSpeedBonus};
 #[derive(Resource, Default, Reflect)]
 pub struct Biomass(pub f32);
 
-#[derive(Resource, PartialEq, Eq, Clone, Copy, Debug, Reflect)]
+#[derive(Resource, PartialEq, Eq, Clone, Copy, Debug, Reflect, Serialize, Deserialize)]
 pub enum BiomassTier {
     Tiny,
     Small,

@@ -30,12 +30,17 @@ impl Default for GameRng {
     }
 }
 
-/// Top-level game state. Gameplay systems run only in `Playing`.
-/// `GameOver` freezes all input/AI and shows the ending overlay.
+/// Top-level game state.
+/// - `MainMenu`: shown at startup; no gameplay runs.
+/// - `Playing`: active gameplay; all game systems run.
+/// - `Paused`: in-game save/pause overlay; gameplay systems frozen.
+/// - `GameOver`: death / ending sequence; all input frozen.
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum GameState {
     #[default]
+    MainMenu,
     Playing,
+    Paused,
     GameOver,
 }
 

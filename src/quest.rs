@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::combat::{Elite, EntityDied, MobBoss};
 use crate::dialogue::DialogueQueue;
@@ -8,7 +9,7 @@ use crate::npc::Liberator;
 use crate::player::ActiveEntity;
 use crate::world::GameState;
 
-#[derive(Resource, PartialEq, Eq, Clone, Copy, Debug, Default)]
+#[derive(Resource, PartialEq, Eq, Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub enum QuestState {
     #[default]
     Escape,
