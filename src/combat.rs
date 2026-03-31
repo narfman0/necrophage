@@ -812,10 +812,10 @@ fn player_attack_system(
                 Color::srgb(0.2, 1.0, 0.4), LinearRgba::new(0.0, 3.0, 0.5, 1.0),
             );
             atk.timer = atk.cooldown;
-            commands.entity(active.0).insert(AttackRecovery(0.2));
+            commands.entity(active.0).insert(AttackRecovery(0.15));
         }
     } else {
-        let mut hit_any = false;
+        // Melee: root on every swing, hit or miss, so attacking always carries risk.
         for (target_entity, target_tf) in &targets {
             if dist_xz(player_tf.translation, target_tf.translation) <= MELEE_RANGE {
                 damage_events.send(DamageEvent {
@@ -823,13 +823,10 @@ fn player_attack_system(
                     amount: base_damage,
                     attacker_pos: Some(*player_grid),
                 });
-                hit_any = true;
             }
         }
-        if hit_any {
-            atk.timer = atk.cooldown;
-            commands.entity(active.0).insert(AttackRecovery(0.35));
-        }
+        atk.timer = atk.cooldown;
+        commands.entity(active.0).insert(AttackRecovery(0.2));
     }
 }
 

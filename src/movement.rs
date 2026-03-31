@@ -188,7 +188,9 @@ fn apply_movement(
                     continue;
                 }
                 let base = MOVE_SPEED * speed_bonus.0;
-                let spd = if atk_recovery.is_some() { base * 0.2 } else { base };
+                // Attack recovery roots the player — skip movement entirely.
+                if atk_recovery.is_some() { continue; }
+                let spd = base;
                 (raw.normalize(), spd)
             }
         };

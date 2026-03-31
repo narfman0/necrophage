@@ -35,7 +35,7 @@ fn spawn_player(
             Dash::default(),
             DashTrailTimer(0.0),
             Health::new(50.0),
-            Attack::new(10.0, 0.5),
+            Attack::new(10.0, 0.25),
             Mesh3d(meshes.add(Capsule3d::new(0.12, 0.18))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::srgb(0.1, 0.9, 0.1),
