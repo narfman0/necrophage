@@ -1,6 +1,9 @@
 use std::collections::VecDeque;
+use std::f32::consts::PI;
 
 use bevy::prelude::*;
+use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::render_asset::RenderAssetUsages;
 use rand::Rng;
 
 use crate::biomass::BiomassTier;
@@ -64,6 +67,35 @@ pub enum AttackMode {
     #[default]
     Melee,
     Ranged,
+}
+
+/// Which melee silhouette shape this enemy telegraphs. Assigned at spawn.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Default, Reflect)]
+pub enum MeleeAttackShape {
+    #[default]
+    Jab,   // narrow forward rectangle — Guards
+    Broad, // 45° arc sector — Elites; randomly assigned to regulars
+}
+
+/// Active while a melee enemy is winding up a strike.
+/// Presence on an enemy freezes its movement (see enemy_chase_system).
+#[derive(Component)]
+pub struct MeleeWindup {
+    pub timer: f32,
+    /// Locked XZ attack direction (normalised).
+    pub direction: Vec2,
+    /// The ground silhouette mesh entity.
+    pub projection_entity: Entity,
+    pub damage: f32,
+    pub shape: MeleeAttackShape,
+    /// Enemy world position when windup started (AoE origin).
+    pub origin: Vec3,
+}
+
+/// Marker on the flat ground silhouette mesh entity.
+#[derive(Component)]
+pub struct AttackProjection {
+    pub owner: Entity,
 }
 
 /// Moving projectile spawned by a ranged attacker.
@@ -154,6 +186,15 @@ const DISSOLVE_DURATION: f32 = 2.0;
 
 const LOST_TIMEOUT: f32 = 2.0;
 
+/// Seconds a melee enemy holds the telegraph pose before the strike fires.
+const MELEE_WINDUP_DURATION: f32 = 0.6;
+/// Jab attack shape: narrow forward rectangle.
+const JAB_HALF_WIDTH:  f32 = 0.40; // full width = 0.8
+const JAB_HALF_LENGTH: f32 = 1.50; // full length = 3.0
+/// Broad attack shape: 45° sector — half-angle in radians (22.5°) and reach radius.
+const BROAD_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_4 / 2.0;
+const BROAD_RADIUS: f32 = MELEE_RANGE * 2.0; // 3.0 world units
+
 /// Melee attack range in world units (XZ plane circle distance).
 const MELEE_RANGE: f32 = 1.5;
 /// Boss melee range — slightly larger to match its area-of-effect swipe.
@@ -236,6 +277,7 @@ impl Plugin for CombatPlugin {
             .register_type::<Attack>()
             .register_type::<EnemyAI>()
             .register_type::<AttackMode>()
+            .register_type::<MeleeAttackShape>()
             .add_systems(
                 Update,
                 (
@@ -259,6 +301,14 @@ impl Plugin for CombatPlugin {
                     player_death_system,
                     heal_on_kill,
                     consume_corpse_system,
+                )
+                .run_if(in_state(GameState::Playing)),
+            )
+            .add_systems(
+                Update,
+                (
+                    melee_windup_system.after(enemy_attack_system),
+                    melee_windup_cleanup_system.after(death_system),
                 )
                 .run_if(in_state(GameState::Playing)),
             )
@@ -393,18 +443,18 @@ fn enemy_patrol_system(
 
 fn enemy_chase_system(
     mut commands: Commands,
-    mut enemies: Query<(Entity, &mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&AttackMode>, Option<&mut EntityPath>, Option<&ChaseTarget>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
+    mut enemies: Query<(Entity, &mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&MeleeWindup>, Option<&AttackMode>, Option<&mut EntityPath>, Option<&ChaseTarget>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
     active: Res<ActiveEntity>,
     target_query: Query<(&GridPos, &Transform), (With<Friendly>, Without<Enemy>)>,
     map: Res<CurrentMap>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut pos, _timer, ai, transform, atk_recovery, mode, mut path_opt, chase_opt) in &mut enemies {
+    for (entity, mut pos, _timer, ai, transform, atk_recovery, windup, mode, mut path_opt, chase_opt) in &mut enemies {
         if *ai != EnemyAI::Chase {
             continue;
         }
-        if atk_recovery.is_some() {
+        if atk_recovery.is_some() || windup.is_some() {
             continue;
         }
         // Determine current target: use stored ChaseTarget or fall back to active entity.
@@ -473,12 +523,11 @@ fn enemy_attack_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut enemies: Query<(Entity, &Transform, &GridPos, &mut Attack, &EnemyAI, Option<&AttackMode>, Option<&ChaseTarget>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
+    mut enemies: Query<(Entity, &Transform, &GridPos, &mut Attack, &EnemyAI, Option<&AttackMode>, Option<&MeleeAttackShape>, Option<&ChaseTarget>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>, Without<MeleeWindup>)>,
     active: Res<ActiveEntity>,
     target_query: Query<&Transform, (With<Friendly>, Without<Enemy>)>,
-    mut damage_events: EventWriter<DamageEvent>,
 ) {
-    for (entity, enemy_tf, grid, mut atk, ai, mode, chase_opt) in &mut enemies {
+    for (entity, enemy_tf, _grid, mut atk, ai, mode, shape_opt, chase_opt) in &mut enemies {
         if *ai != EnemyAI::Chase && *ai != EnemyAI::AttackTarget {
             continue;
         }
@@ -491,13 +540,23 @@ fn enemy_attack_system(
         match mode.copied().unwrap_or_default() {
             AttackMode::Melee => {
                 if dist <= MELEE_RANGE {
-                    damage_events.send(DamageEvent {
-                        target: target_entity,
-                        amount: atk.damage,
-                        attacker_pos: Some(*grid),
+                    let dir = (target_tf.translation - enemy_tf.translation)
+                        .xz()
+                        .normalize_or_zero();
+                    let shape = shape_opt.copied().unwrap_or_default();
+                    let projection_entity = spawn_attack_projection(
+                        &mut commands, &mut meshes, &mut materials,
+                        entity, enemy_tf.translation, dir, shape,
+                    );
+                    commands.entity(entity).insert(MeleeWindup {
+                        timer: MELEE_WINDUP_DURATION,
+                        direction: dir,
+                        projection_entity,
+                        damage: atk.damage,
+                        shape,
+                        origin: enemy_tf.translation,
                     });
                     atk.timer = atk.cooldown;
-                    commands.entity(entity).insert(AttackRecovery(0.35));
                 }
             }
             AttackMode::Ranged => {
@@ -512,6 +571,144 @@ fn enemy_attack_system(
                 }
             }
         }
+    }
+}
+
+/// Build a flat triangle-fan sector mesh in local space pointing in the +Z direction.
+/// The sector tip sits at the local origin; the arc sweeps ±`half_angle_rad` from +Z.
+fn build_sector_mesh(radius: f32, half_angle_rad: f32, segments: u32) -> Mesh {
+    let mut positions: Vec<[f32; 3]> = vec![[0.0, 0.0, 0.0]];
+    let mut normals:   Vec<[f32; 3]> = vec![[0.0, 1.0, 0.0]];
+    let mut uvs:       Vec<[f32; 2]> = vec![[0.5, 0.5]];
+    for i in 0..=segments {
+        let t = i as f32 / segments as f32;
+        let angle = -half_angle_rad + t * 2.0 * half_angle_rad;
+        positions.push([radius * angle.sin(), 0.0, radius * angle.cos()]);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([0.5 + 0.5 * angle.sin(), 0.5 + 0.5 * angle.cos()]);
+    }
+    let mut indices: Vec<u32> = Vec::new();
+    for i in 0..segments {
+        indices.extend_from_slice(&[0u32, i + 1, i + 2]);
+    }
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL,   normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0,     uvs);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
+/// Spawn the flat ground silhouette shown before a melee attack fires.
+/// Returns the spawned entity ID so it can be stored in `MeleeWindup`.
+fn spawn_attack_projection(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    owner: Entity,
+    origin: Vec3,
+    direction: Vec2,
+    shape: MeleeAttackShape,
+) -> Entity {
+    let rot = Quat::from_rotation_y(f32::atan2(direction.x, direction.y));
+    let proj_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.2, 0.05, 0.55),
+        emissive: LinearRgba::new(2.5, 0.3, 0.0, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        double_sided: true,
+        cull_mode: None,
+        unlit: true,
+        ..default()
+    });
+    let (mesh_handle, translation) = match shape {
+        MeleeAttackShape::Jab => {
+            // Rectangle: center offset forward so the back edge aligns with the enemy
+            let mesh = meshes.add(Cuboid::new(JAB_HALF_WIDTH * 2.0, 0.02, JAB_HALF_LENGTH * 2.0));
+            let pos = Vec3::new(
+                origin.x + direction.x * JAB_HALF_LENGTH,
+                0.01,
+                origin.z + direction.y * JAB_HALF_LENGTH,
+            );
+            (mesh, pos)
+        }
+        MeleeAttackShape::Broad => {
+            // Sector: tip at origin, arc extends forward
+            let mesh = meshes.add(build_sector_mesh(BROAD_RADIUS, BROAD_HALF_ANGLE, 12));
+            let pos = Vec3::new(origin.x, 0.01, origin.z);
+            (mesh, pos)
+        }
+    };
+    commands.spawn((
+        Mesh3d(mesh_handle),
+        MeshMaterial3d(proj_material),
+        Transform::from_translation(translation).with_rotation(rot),
+        AttackProjection { owner },
+        LevelEntity,
+    )).id()
+}
+
+/// Ticks melee windup timers. When a windup expires, performs an AoE hit check
+/// matching the silhouette geometry, sends damage events, and cleans up the projection.
+fn melee_windup_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut enemies: Query<(Entity, &mut MeleeWindup, &GridPos), (With<Enemy>, Without<Dying>, Without<Corpse>)>,
+    friendlies: Query<(Entity, &Transform), (With<Friendly>, Without<Enemy>)>,
+    mut damage_events: EventWriter<DamageEvent>,
+) {
+    let dt = time.delta_secs();
+    for (enemy_entity, mut windup, grid) in &mut enemies {
+        windup.timer -= dt;
+        if windup.timer > 0.0 {
+            continue;
+        }
+        // Windup complete — check all friendlies against the attack zone
+        let fwd   = windup.direction;
+        let right = Vec2::new(fwd.y, -fwd.x);
+        let attack_angle = f32::atan2(fwd.x, fwd.y);
+        for (target_entity, target_tf) in &friendlies {
+            let delta = Vec2::new(
+                target_tf.translation.x - windup.origin.x,
+                target_tf.translation.z - windup.origin.z,
+            );
+            let hit = match windup.shape {
+                MeleeAttackShape::Jab => {
+                    let local_fwd   = delta.dot(fwd);
+                    let local_right = delta.dot(right);
+                    local_fwd >= 0.0
+                        && local_fwd <= JAB_HALF_LENGTH * 2.0
+                        && local_right.abs() <= JAB_HALF_WIDTH
+                }
+                MeleeAttackShape::Broad => {
+                    let dist = delta.length();
+                    let target_angle = f32::atan2(delta.x, delta.y);
+                    let diff = (target_angle - attack_angle + PI).rem_euclid(2.0 * PI) - PI;
+                    dist <= BROAD_RADIUS && diff.abs() <= BROAD_HALF_ANGLE
+                }
+            };
+            if hit {
+                damage_events.send(DamageEvent {
+                    target: target_entity,
+                    amount: windup.damage,
+                    attacker_pos: Some(*grid),
+                });
+            }
+        }
+        commands.entity(windup.projection_entity).despawn();
+        commands.entity(enemy_entity)
+            .remove::<MeleeWindup>()
+            .insert(AttackRecovery(0.35));
+    }
+}
+
+/// Despawns the ground projection if the owning enemy dies before the windup fires.
+fn melee_windup_cleanup_system(
+    mut commands: Commands,
+    dying: Query<(Entity, &MeleeWindup), Or<(With<Dying>, With<Corpse>)>>,
+) {
+    for (entity, windup) in &dying {
+        commands.entity(windup.projection_entity).despawn();
+        commands.entity(entity).remove::<MeleeWindup>();
     }
 }
 

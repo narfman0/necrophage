@@ -11,7 +11,7 @@ use bevy::ecs::system::SystemParam;
 
 use crate::biomass::{Biomass, BiomassTier};
 use crate::combat::{
-    spawn_enemy, AttackMode, BossAI, Civilian, Elite, Enemy, Health, MobBoss, PatrolTimer,
+    spawn_enemy, AttackMode, BossAI, Civilian, Elite, Enemy, Health, MeleeAttackShape, MobBoss, PatrolTimer,
 };
 use crate::dialogue::DialogueQueue;
 use crate::ending::{EndingPhase, FadeTimer};
@@ -155,7 +155,7 @@ fn generate_world(
             &mut commands, &mut meshes, &mut materials,
             GridPos { x: wx, y: wy }, 25.0, 8.0, Color::srgb(0.7, 0.5, 0.1),
         );
-        commands.entity(e).insert(LevelEntity);
+        commands.entity(e).insert(LevelEntity).insert(MeleeAttackShape::Jab);
     }
 
     // Spawn district enemies with 50/50 melee/ranged assignment.
@@ -166,7 +166,12 @@ fn generate_world(
             &mut commands, &mut meshes, &mut materials,
             GridPos { x: wx, y: wy }, 20.0, 6.0, Color::srgb(0.8, 0.2, 0.2),
         );
-        commands.entity(e).insert(mode).insert(LevelEntity);
+        if mode == AttackMode::Melee {
+            let shape = if rng.gen_bool(0.5) { MeleeAttackShape::Broad } else { MeleeAttackShape::Jab };
+            commands.entity(e).insert(mode).insert(shape).insert(LevelEntity);
+        } else {
+            commands.entity(e).insert(mode).insert(LevelEntity);
+        }
     }
 
     // Spawn elite (lieutenant).
@@ -176,7 +181,7 @@ fn generate_world(
             &mut commands, &mut meshes, &mut materials,
             GridPos { x: wx, y: wy }, 80.0, 15.0, Color::srgb(0.9, 0.4, 0.0),
         );
-        commands.entity(e).insert(Elite).insert(LevelEntity);
+        commands.entity(e).insert(Elite).insert(MeleeAttackShape::Broad).insert(LevelEntity);
     }
 
     // Spawn boss (pre-placed in the world).

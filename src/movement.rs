@@ -24,9 +24,9 @@ pub const ENTITY_RADIUS: f32 = 0.35;
 /// Walk speed for non-player entities (enemies / NPCs) in world units/sec.
 const WALK_SPEED: f32 = 2.5;
 /// Speed multiplier during a dash.
-const DASH_SPEED: f32 = 26.0;
+const DASH_SPEED: f32 = 14.0;
 /// How long a dash lasts in seconds.
-const DASH_DURATION: f32 = 0.12;
+const DASH_DURATION: f32 = 0.09;
 /// Cooldown between dashes in seconds.
 const DASH_COOLDOWN: f32 = 0.8;
 /// How long the post-dash recovery slow lasts in seconds.
