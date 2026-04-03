@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::biomass::{Biomass, BiomassTier};
+use crate::biomass::{Biomass, PsychicPower};
 use crate::camera::CameraTarget;
 use crate::combat::{
     Attack, AttackMode, Civilian, Corpse, DamageEvent, Dying, Enemy, EntityDied, EntityPath, Health,
@@ -143,6 +143,10 @@ impl SwarmUnlocks {
     }
 }
 
+/// Cooldown timer for the player's psychic blast attack (Q key).
+#[derive(Resource, Default)]
+pub struct PsychicAttackCooldown(pub f32);
+
 // ── HUD marker ────────────────────────────────────────────────────────────────
 
 #[derive(Component)]
@@ -156,6 +160,7 @@ impl Plugin for SwarmPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Swarm::default())
             .init_resource::<SwarmUnlocks>()
+            .init_resource::<PsychicAttackCooldown>()
             .register_type::<CreatureKind>()
             .register_type::<SwarmMember>()
             .register_type::<StrongAttack>()
@@ -167,7 +172,9 @@ impl Plugin for SwarmPlugin {
                 (
                     spawn_creature_system,
                     tick_strong_attack,
+                    tick_psychic_attack_cooldown,
                     strong_attack_system.after(tick_strong_attack),
+                    psychic_attack_system.after(tick_psychic_attack_cooldown),
                     swarm_follow_system,
                     swarm_ai_system.after(swarm_follow_system),
                     swarm_auto_attack_system.after(swarm_ai_system),
@@ -241,6 +248,7 @@ fn spawn_creature_system(
     mut biomass: ResMut<Biomass>,
     mut swarm: ResMut<Swarm>,
     unlocks: Res<SwarmUnlocks>,
+    psychic_power: Res<PsychicPower>,
     mut dialogue: ResMut<DialogueQueue>,
 ) {
     let kind = [
@@ -260,6 +268,12 @@ fn spawn_creature_system(
 
     if !unlocks.is_unlocked(&kind) {
         dialogue.push("System", &format!("{} not yet unlocked.", kind.display_name()));
+        return;
+    }
+
+    let capacity = psychic_power.swarm_capacity();
+    if swarm.members.len() >= capacity {
+        dialogue.push("System", &format!("Swarm full ({}/{}). Gain more psychic power to expand.", swarm.members.len(), capacity));
         return;
     }
 
@@ -290,7 +304,7 @@ fn strong_attack_system(
     active_query: Query<(&Transform, &GridPos)>,
     mut attackers: Query<(&mut StrongAttack, Option<&AttackMode>)>,
     targets: Query<(Entity, &Transform), Or<(With<Enemy>, With<Civilian>)>>,
-    tier: Res<BiomassTier>,
+    psychic_power: Res<PsychicPower>,
     mut damage_events: EventWriter<DamageEvent>,
 ) {
     if !keys.just_pressed(KeyCode::KeyK) {
@@ -301,7 +315,7 @@ fn strong_attack_system(
     if sa.timer > 0.0 {
         return;
     }
-    let base_damage = sa.damage * tier.damage_multiplier();
+    let base_damage = sa.damage * psychic_power.damage_multiplier();
     let is_ranged = mode == Some(&AttackMode::Ranged);
 
     if is_ranged {
@@ -523,7 +537,7 @@ fn swarm_auto_attack_system(
     friendly_targets: Query<(Entity, &Transform, &GridPos), (With<Friendly>, Without<Dying>)>,
     controlled_q: Query<(), With<Controlled>>,
     mut damage_events: EventWriter<DamageEvent>,
-    tier: Res<BiomassTier>,
+    psychic_power: Res<PsychicPower>,
     map: Res<CurrentMap>,
 ) {
     // Collect target positions once.
@@ -572,7 +586,7 @@ fn swarm_auto_attack_system(
 
         let Some((target_entity, target_pos, _)) = nearest else { continue };
         let dist = dist_xz(member_pos, target_pos);
-        let base_damage = atk.damage * tier.damage_multiplier();
+        let base_damage = atk.damage * psychic_power.damage_multiplier();
 
         if mode == Some(&AttackMode::Ranged) {
             if dist <= RANGED_ATTACK_RANGE {
@@ -737,6 +751,63 @@ fn swarm_hud_system(
     };
     for mut text in &mut display {
         text.0 = format!("Swarm: {}  [{}]", swarm.members.len(), active_name);
+    }
+}
+
+// ── Psychic attack ────────────────────────────────────────────────────────────
+
+/// Base cooldown in seconds for the psychic blast.
+const PSYCHIC_ATTACK_BASE_COOLDOWN: f32 = 5.0;
+/// Number of targets hit per psychic blast.
+const PSYCHIC_BLAST_TARGETS: usize = 3;
+/// Maximum world-unit range of the psychic blast.
+const PSYCHIC_BLAST_RANGE: f32 = 8.0;
+
+fn tick_psychic_attack_cooldown(
+    mut cooldown: ResMut<PsychicAttackCooldown>,
+    time: Res<Time>,
+) {
+    if cooldown.0 > 0.0 {
+        cooldown.0 -= time.delta_secs();
+    }
+}
+
+/// Q key: fire a psychic blast hitting the closest PSYCHIC_BLAST_TARGETS enemies.
+fn psychic_attack_system(
+    keys: Res<ButtonInput<KeyCode>>,
+    active: Res<ActiveEntity>,
+    active_query: Query<&Transform>,
+    targets: Query<(Entity, &Transform), With<Enemy>>,
+    psychic_power: Res<PsychicPower>,
+    mut cooldown: ResMut<PsychicAttackCooldown>,
+    mut damage_events: EventWriter<DamageEvent>,
+) {
+    if !keys.just_pressed(KeyCode::KeyQ) {
+        return;
+    }
+    if cooldown.0 > 0.0 {
+        return;
+    }
+    let Ok(active_tf) = active_query.get(active.0) else { return };
+    let damage = psychic_power.attack_potency();
+
+    // Collect targets in range, sorted by distance.
+    let mut in_range: Vec<(Entity, f32)> = targets
+        .iter()
+        .filter_map(|(entity, tf)| {
+            let d = dist_xz(active_tf.translation, tf.translation);
+            if d <= PSYCHIC_BLAST_RANGE { Some((entity, d)) } else { None }
+        })
+        .collect();
+    in_range.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let hit_count = in_range.len().min(PSYCHIC_BLAST_TARGETS);
+    for (entity, _) in in_range.into_iter().take(hit_count) {
+        damage_events.send(DamageEvent { target: entity, amount: damage, attacker_pos: None });
+    }
+
+    if hit_count > 0 {
+        cooldown.0 = PSYCHIC_ATTACK_BASE_COOLDOWN;
     }
 }
 

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-use crate::biomass::{Biomass, BiomassTier};
+use crate::biomass::{Biomass, BiomassTier, PsychicPower};
 use crate::combat::Health;
 use crate::faction::FactionProgress;
 use crate::levels::LevelSeed;
@@ -30,6 +30,8 @@ pub struct SaveData {
     pub faction_progress: FactionProgress,
     #[serde(default)]
     pub swarm_unlocks: Vec<CreatureKind>,
+    #[serde(default)]
+    pub psychic_power: f32,
 }
 
 fn save_path(slot: usize) -> PathBuf {
@@ -77,6 +79,7 @@ fn handle_save_game(
     mut events: EventReader<SaveGame>,
     biomass: Res<Biomass>,
     tier: Res<BiomassTier>,
+    psychic_power: Res<PsychicPower>,
     quest: Res<QuestState>,
     boss_defeated: Res<BossDefeated>,
     escape_fired: Res<EscapeFired>,
@@ -108,6 +111,7 @@ fn handle_save_game(
                 general_defeated: faction.general_defeated,
             },
             swarm_unlocks: sw_unlocks.unlocked.clone(),
+            psychic_power: psychic_power.0,
         };
         match write_save(ev.0, &data) {
             Ok(()) => println!("[Save] Saved to slot {}", ev.0),
@@ -120,6 +124,7 @@ fn handle_load_game(
     mut events: EventReader<LoadGame>,
     mut biomass: ResMut<Biomass>,
     mut tier: ResMut<BiomassTier>,
+    mut psychic_power: ResMut<PsychicPower>,
     mut quest: ResMut<QuestState>,
     mut boss_defeated: ResMut<BossDefeated>,
     mut escape_fired: ResMut<EscapeFired>,
@@ -135,6 +140,7 @@ fn handle_load_game(
         };
         biomass.0 = data.biomass;
         *tier = data.biomass_tier;
+        psychic_power.0 = data.psychic_power;
         // Translate legacy Complete state → FactionHunt for old saves.
         *quest = match data.quest_state {
             QuestState::Complete => QuestState::FactionHunt,

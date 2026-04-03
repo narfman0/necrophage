@@ -6,7 +6,7 @@ use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_asset::RenderAssetUsages;
 use rand::Rng;
 
-use crate::biomass::BiomassTier;
+use crate::biomass::PsychicPower;
 use crate::movement::{AttackRecovery, Body, GridPos, MoveDir, WALK_ARRIVAL_DIST};
 use crate::player::{ActiveEntity, Player};
 use crate::world::{map::TileMap, tile::TileType, CurrentMap, Friendly, GameRng, GameState, LevelEntity, PlayerDied, Suspended};
@@ -160,6 +160,26 @@ pub struct Dying {
     pub timer: f32,
 }
 
+/// How the player benefits from harvesting a low-health enemy.
+#[derive(Clone, Debug)]
+pub enum HarvestReward {
+    Health(f32),
+    Biomass(f32),
+    Nothing,
+}
+
+/// Added to a low-health enemy to open the harvest window.
+/// The enemy is also given `Invincible` while this component is present.
+#[derive(Component)]
+pub struct HarvestWindow {
+    pub timer: f32,
+    pub reward: HarvestReward,
+}
+
+/// Prevents a second harvest window from opening on the same enemy.
+#[derive(Component)]
+pub struct HarvestExhausted;
+
 /// Marks an entity that an enemy is actively targeting.
 #[derive(Component, Reflect)]
 pub struct ChaseTarget(pub Entity);
@@ -185,6 +205,17 @@ const DISSOLVE_DELAY: f32 = 1.0;
 const DISSOLVE_DURATION: f32 = 2.0;
 
 const LOST_TIMEOUT: f32 = 2.0;
+
+/// HP fraction below which a non-boss enemy becomes harvestable (12 %).
+const HARVEST_THRESHOLD: f32 = 0.12;
+/// Duration of the harvest window before it expires.
+const HARVEST_WINDOW_DURATION: f32 = 2.5;
+/// Chebyshev tile range within which the player can execute a harvest.
+const HARVEST_RANGE: i32 = 3;
+/// HP restored to the player when harvesting a health-reward enemy.
+const HARVEST_HEALTH: f32 = 15.0;
+/// Biomass awarded when harvesting a biomass-reward enemy.
+const HARVEST_BIOMASS: f32 = 10.0;
 
 /// Seconds a melee enemy holds the telegraph pose before the strike fires.
 const MELEE_WINDUP_DURATION: f32 = 0.6;
@@ -317,6 +348,16 @@ impl Plugin for CombatPlugin {
                     spawn_hit_flash,
                     hit_flash_system,
                     civilian_flee_on_damage,
+                )
+                .run_if(in_state(GameState::Playing)),
+            )
+            .add_systems(
+                Update,
+                (
+                    open_harvest_window_system,
+                    tick_harvest_window_system,
+                    harvest_action_system.after(open_harvest_window_system),
+                    harvest_pulse_system,
                 )
                 .run_if(in_state(GameState::Playing)),
             )
@@ -783,7 +824,7 @@ fn player_attack_system(
     mut attackers: Query<&mut Attack>,
     attack_modes: Query<&AttackMode>,
     targets: Query<(Entity, &Transform), Or<(With<Enemy>, With<Civilian>)>>,
-    tier: Res<BiomassTier>,
+    psychic_power: Res<PsychicPower>,
     mut damage_events: EventWriter<DamageEvent>,
 ) {
     if !keys.just_pressed(KeyCode::KeyJ) && !buttons.just_pressed(MouseButton::Left) {
@@ -794,7 +835,7 @@ fn player_attack_system(
     if atk.timer > 0.0 {
         return;
     }
-    let base_damage = atk.damage * tier.damage_multiplier();
+    let base_damage = atk.damage * psychic_power.damage_multiplier();
     let is_ranged = attack_modes.get(active.0).ok() == Some(&AttackMode::Ranged);
 
     if is_ranged {
@@ -1007,6 +1048,7 @@ fn consume_corpse_system(
     active_pos: Query<&GridPos>,
     corpses: Query<(Entity, &GridPos, &Corpse, &Transform)>,
     mut biomass: ResMut<crate::biomass::Biomass>,
+    mut psychic_power: ResMut<PsychicPower>,
 ) {
     let Ok(player_gp) = active_pos.get(active.0) else { return };
 
@@ -1015,6 +1057,7 @@ fn consume_corpse_system(
         let dist = (gp.x - player_gp.x).abs().max((gp.y - player_gp.y).abs());
         if dist <= CONSUME_RANGE {
             biomass.0 += corpse.biomass_value;
+            psychic_power.0 += corpse.biomass_value;
             // Floating "+Xbm" text above the corpse.
             let world_pos = transform.translation + Vec3::new(0.0, 1.2, 0.0);
             commands.spawn((
@@ -1275,6 +1318,161 @@ fn update_floating_numbers(
     }
 }
 
+// ── Harvest window ────────────────────────────────────────────────────────────
+
+/// When a non-boss enemy's HP drops to HARVEST_THRESHOLD, open the harvest window:
+/// stun them (Invincible) and show a pulsing colour cue.
+fn open_harvest_window_system(
+    mut commands: Commands,
+    enemies: Query<
+        (Entity, &Health),
+        (
+            With<Enemy>,
+            Without<MobBoss>,
+            Without<Civilian>,
+            Without<HarvestWindow>,
+            Without<HarvestExhausted>,
+            Without<Dying>,
+            Without<Corpse>,
+        ),
+    >,
+    mut rng: ResMut<GameRng>,
+) {
+    for (entity, hp) in &enemies {
+        if hp.max <= 0.0 || hp.current / hp.max > HARVEST_THRESHOLD {
+            continue;
+        }
+        let roll: u32 = rng.0.gen_range(0..3);
+        let reward = match roll {
+            0 => HarvestReward::Health(HARVEST_HEALTH),
+            1 => HarvestReward::Biomass(HARVEST_BIOMASS),
+            _ => HarvestReward::Nothing,
+        };
+        commands.entity(entity).insert((
+            HarvestWindow { timer: HARVEST_WINDOW_DURATION, reward },
+            Invincible,
+        ));
+    }
+}
+
+/// Count down the harvest window. On expiry, remove it and the stun so the
+/// enemy resumes fighting; add HarvestExhausted to prevent a second window.
+fn tick_harvest_window_system(
+    mut commands: Commands,
+    mut enemies: Query<(Entity, &mut HarvestWindow, &MeshMaterial3d<StandardMaterial>)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    time: Res<Time>,
+) {
+    for (entity, mut hw, mat_handle) in &mut enemies {
+        hw.timer -= time.delta_secs();
+        if hw.timer <= 0.0 {
+            // Restore neutral emissive.
+            if let Some(mat) = materials.get_mut(mat_handle.id()) {
+                mat.emissive = LinearRgba::BLACK;
+            }
+            commands.entity(entity)
+                .remove::<HarvestWindow>()
+                .remove::<Invincible>()
+                .insert(HarvestExhausted);
+        }
+    }
+}
+
+/// F key near a harvestable enemy: snap the player onto it, apply the reward,
+/// and set HP to a lethal value so death_system kills it this frame.
+fn harvest_action_system(
+    keys: Res<ButtonInput<KeyCode>>,
+    active: Res<ActiveEntity>,
+    mut params: ParamSet<(
+        Query<(&mut GridPos, &mut Transform), With<Player>>,
+        Query<(Entity, &GridPos, &Transform, &HarvestWindow), (With<Enemy>, Without<MobBoss>)>,
+    )>,
+    mut health_query: Query<&mut Health>,
+    mut biomass: ResMut<crate::biomass::Biomass>,
+    mut psychic_power: ResMut<PsychicPower>,
+    mut commands: Commands,
+) {
+    if !keys.just_pressed(KeyCode::KeyF) {
+        return;
+    }
+
+    // Read player position.
+    let player_gp = {
+        let q = params.p0();
+        let Ok((gp, _)) = q.get(active.0) else { return };
+        *gp
+    };
+
+    // Find the nearest harvestable enemy within range.
+    let mut best: Option<(Entity, GridPos, Vec3, HarvestReward)> = None;
+    {
+        let q = params.p1();
+        for (entity, gp, tf, hw) in &q {
+            let dist = (gp.x - player_gp.x).abs().max((gp.y - player_gp.y).abs());
+            if dist <= HARVEST_RANGE {
+                let closer = best.as_ref().map_or(true, |(_, bgp, _, _)| {
+                    let bd = (bgp.x - player_gp.x).abs().max((bgp.y - player_gp.y).abs());
+                    dist < bd
+                });
+                if closer {
+                    best = Some((entity, *gp, tf.translation, hw.reward.clone()));
+                }
+            }
+        }
+    }
+
+    let Some((entity, enemy_gp, enemy_world_pos, reward)) = best else { return };
+
+    // Snap player onto the enemy.
+    {
+        let mut q = params.p0();
+        if let Ok((mut gp, mut tf)) = q.get_mut(active.0) {
+            gp.x = enemy_gp.x;
+            gp.y = enemy_gp.y;
+            tf.translation.x = enemy_world_pos.x;
+            tf.translation.z = enemy_world_pos.z;
+        }
+    }
+
+    // Apply reward.
+    match reward {
+        HarvestReward::Health(amount) => {
+            if let Ok(mut hp) = health_query.get_mut(active.0) {
+                hp.current = (hp.current + amount).min(hp.max);
+            }
+        }
+        HarvestReward::Biomass(amount) => {
+            biomass.0 += amount;
+            psychic_power.0 += amount;
+        }
+        HarvestReward::Nothing => {}
+    }
+
+    // Kill the enemy — set HP lethal so death_system fires this frame.
+    if let Ok(mut hp) = health_query.get_mut(entity) {
+        hp.current = -999.0;
+    }
+    commands.entity(entity).remove::<HarvestWindow>().remove::<Invincible>();
+}
+
+/// Pulse the emissive colour of harvestable enemies to signal their reward type.
+fn harvest_pulse_system(
+    time: Res<Time>,
+    harvestables: Query<(&HarvestWindow, &MeshMaterial3d<StandardMaterial>)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let pulse = ((time.elapsed_secs() * 5.0).sin() * 0.5 + 0.5).powi(2);
+    for (hw, mat_handle) in &harvestables {
+        if let Some(mat) = materials.get_mut(mat_handle.id()) {
+            mat.emissive = match hw.reward {
+                HarvestReward::Health(_)  => LinearRgba::new(0.0, pulse * 5.0, 0.0, 1.0),
+                HarvestReward::Biomass(_) => LinearRgba::new(pulse * 5.0, 0.0, 0.0, 1.0),
+                HarvestReward::Nothing    => LinearRgba::new(pulse, pulse, pulse, 1.0),
+            };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1362,5 +1560,26 @@ mod tests {
     #[test]
     fn alert_radius_positive() {
         assert!(ALERT_RADIUS > 0);
+    }
+
+    #[test]
+    fn harvest_threshold_is_twelve_percent() {
+        assert!((HARVEST_THRESHOLD - 0.12).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn harvest_window_duration_positive() {
+        assert!(HARVEST_WINDOW_DURATION > 0.0);
+    }
+
+    #[test]
+    fn harvest_range_positive() {
+        assert!(HARVEST_RANGE > 0);
+    }
+
+    #[test]
+    fn harvest_rewards_are_positive() {
+        assert!(HARVEST_HEALTH > 0.0);
+        assert!(HARVEST_BIOMASS > 0.0);
     }
 }

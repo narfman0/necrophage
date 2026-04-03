@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::biomass::Biomass;
+use crate::biomass::{Biomass, PsychicPower};
 use crate::boss::GeneralBoss;
 use crate::combat::{Corpse, DamageEvent, Dying, EntityDied, Health, MobBoss};
 use crate::dialogue::DialogueQueue;
@@ -461,6 +461,7 @@ pub fn on_boss_killed(
     bosses: Query<(&FactionId, &BossRelation), With<MobBoss>>,
     mut faction: ResMut<FactionProgress>,
     mut biomass: ResMut<Biomass>,
+    mut psychic_power: ResMut<PsychicPower>,
     mut resolved_events: EventWriter<FactionResolved>,
     mut dialogue: ResMut<DialogueQueue>,
 ) {
@@ -473,6 +474,7 @@ pub fn on_boss_killed(
             // award the plan reward biomass.
             if faction.get(fid) == FactionState::JobComplete {
                 biomass.0 += PLAN_REWARD_BIOMASS;
+                psychic_power.0 += PLAN_REWARD_BIOMASS;
                 dialogue.push("System", &format!("{} biomass absorbed from completed job.", PLAN_REWARD_BIOMASS as i32));
             }
             let _ = rel; // BossRelation noted but not needed here

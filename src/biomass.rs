@@ -1,10 +1,9 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::combat::Health;
 use crate::movement::GridPos;
-use crate::player::{ActiveEntity, Player};
-use crate::world::{GameState, PlayerSpeedBonus};
+use crate::player::ActiveEntity;
+use crate::world::GameState;
 
 #[derive(Resource, Default, Reflect)]
 pub struct Biomass(pub f32);
@@ -76,6 +75,51 @@ impl BiomassTier {
     }
 }
 
+/// Monotonically increasing total of all biomass ever collected.
+/// Drives player power progression: swarm capacity, damage, psychic attack potency.
+/// Unlike `Biomass`, spending biomass does NOT decrease `PsychicPower`.
+#[derive(Resource, Default, Reflect, Serialize, Deserialize, Clone, Copy)]
+pub struct PsychicPower(pub f32);
+
+impl PsychicPower {
+    pub fn tier(&self) -> u8 {
+        match self.0 as u32 {
+            0..=50 => 0,
+            51..=150 => 1,
+            151..=300 => 2,
+            301..=600 => 3,
+            _ => 4,
+        }
+    }
+
+    /// Damage multiplier applied to player and swarm attacks.
+    pub fn damage_multiplier(&self) -> f32 {
+        match self.tier() {
+            0 => 1.0,
+            1 => 1.3,
+            2 => 1.7,
+            3 => 2.3,
+            _ => 3.5,
+        }
+    }
+
+    /// Maximum swarm members (including the player body).
+    pub fn swarm_capacity(&self) -> usize {
+        self.tier() as usize + 2
+    }
+
+    /// Base damage for the psychic blast (Q key).
+    pub fn attack_potency(&self) -> f32 {
+        match self.tier() {
+            0 => 15.0,
+            1 => 25.0,
+            2 => 40.0,
+            3 => 60.0,
+            _ => 90.0,
+        }
+    }
+}
+
 #[derive(Component)]
 pub struct BiomassOrb;
 
@@ -94,17 +138,15 @@ impl Plugin for BiomassPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Biomass>()
             .init_resource::<BiomassTier>()
+            .init_resource::<PsychicPower>()
             .register_type::<Biomass>()
             .register_type::<BiomassTier>()
+            .register_type::<PsychicPower>()
             .add_event::<TierChanged>()
             .add_systems(
                 Update,
-                (
-                    pickup_orbs,
-                    update_tier.after(pickup_orbs),
-                    apply_tier_changes.after(update_tier),
-                )
-                .run_if(in_state(GameState::Playing)),
+                (pickup_orbs, update_tier.after(pickup_orbs))
+                    .run_if(in_state(GameState::Playing)),
             )
             // UI update runs regardless of state so the HUD stays accurate.
             .add_systems(Update, update_biomass_ui);
@@ -117,12 +159,14 @@ fn pickup_orbs(
     active_pos: Query<&GridPos>,
     orbs: Query<(Entity, &GridPos, &OrbValue), With<BiomassOrb>>,
     mut biomass: ResMut<Biomass>,
+    mut psychic_power: ResMut<PsychicPower>,
 ) {
     let Ok(pos) = active_pos.get(active.0) else { return };
     for (orb_entity, orb_pos, orb_val) in &orbs {
         let dist = (orb_pos.x - pos.x).abs().max((orb_pos.y - pos.y).abs());
         if dist <= 2 {
             biomass.0 += orb_val.0;
+            psychic_power.0 += orb_val.0;
             commands.entity(orb_entity).despawn();
         }
     }
@@ -140,35 +184,21 @@ fn update_tier(
     }
 }
 
-fn apply_tier_changes(
-    mut events: EventReader<TierChanged>,
-    mut transforms: Query<&mut Transform, With<Player>>,
-    mut healths: Query<&mut Health, With<Player>>,
-    mut speed_bonus: ResMut<PlayerSpeedBonus>,
-) {
-    for ev in events.read() {
-        for mut t in &mut transforms {
-            t.scale = ev.new.scale();
-        }
-        for mut h in &mut healths {
-            let base = 50.0;
-            h.max = base * ev.new.hp_bonus();
-            h.current = h.current.min(h.max);
-        }
-        speed_bonus.0 = ev.new.speed_multiplier();
-    }
-}
-
 fn update_biomass_ui(
     biomass: Res<Biomass>,
-    tier: Res<BiomassTier>,
+    psychic_power: Res<PsychicPower>,
     mut query: Query<&mut Text, With<BiomassDisplay>>,
 ) {
-    if !biomass.is_changed() && !tier.is_changed() {
+    if !biomass.is_changed() && !psychic_power.is_changed() {
         return;
     }
     for mut text in &mut query {
-        text.0 = format!("Biomass: {:.0}  [{:?}]", biomass.0, *tier);
+        text.0 = format!(
+            "Biomass: {:.0}  [Psychic: {:.0} T{}]",
+            biomass.0,
+            psychic_power.0,
+            psychic_power.tier(),
+        );
     }
 }
 
@@ -245,6 +275,52 @@ mod tests {
                 "{:?} hp_bonus should be less than {:?}",
                 tiers[i],
                 tiers[i + 1]
+            );
+        }
+    }
+
+    #[test]
+    fn psychic_power_tier_thresholds() {
+        assert_eq!(PsychicPower(0.0).tier(), 0);
+        assert_eq!(PsychicPower(50.0).tier(), 0);
+        assert_eq!(PsychicPower(51.0).tier(), 1);
+        assert_eq!(PsychicPower(150.0).tier(), 1);
+        assert_eq!(PsychicPower(151.0).tier(), 2);
+        assert_eq!(PsychicPower(300.0).tier(), 2);
+        assert_eq!(PsychicPower(301.0).tier(), 3);
+        assert_eq!(PsychicPower(600.0).tier(), 3);
+        assert_eq!(PsychicPower(601.0).tier(), 4);
+    }
+
+    #[test]
+    fn psychic_power_swarm_capacity_grows() {
+        for t in 0u8..5 {
+            let p = match t {
+                0 => PsychicPower(0.0),
+                1 => PsychicPower(51.0),
+                2 => PsychicPower(151.0),
+                3 => PsychicPower(301.0),
+                _ => PsychicPower(601.0),
+            };
+            assert_eq!(p.swarm_capacity(), t as usize + 2);
+        }
+    }
+
+    #[test]
+    fn psychic_power_damage_multiplier_increases() {
+        let powers = [
+            PsychicPower(0.0),
+            PsychicPower(51.0),
+            PsychicPower(151.0),
+            PsychicPower(301.0),
+            PsychicPower(601.0),
+        ];
+        for i in 0..powers.len() - 1 {
+            assert!(
+                powers[i].damage_multiplier() < powers[i + 1].damage_multiplier(),
+                "tier {} damage should be less than tier {}",
+                i,
+                i + 1
             );
         }
     }
