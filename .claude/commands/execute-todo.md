@@ -15,9 +15,9 @@ Work through every actionable item in `docs/TODO.md` sequentially without stoppi
 
 4. **Build & test**:
    ```bash
-   cargo check --manifest-path C:/workspace/necrophage/Cargo.toml
-   cargo check --manifest-path C:/workspace/necrophage/Cargo.toml --features debug
-   cargo test --manifest-path C:/workspace/necrophage/Cargo.toml -p necrophage-core
+   cargo check
+   cargo check --features debug
+   cargo test -p necrophage-core
    ```
    Fix all errors and warnings before proceeding. Zero errors, zero warnings is the bar.
 
@@ -25,9 +25,9 @@ Work through every actionable item in `docs/TODO.md` sequentially without stoppi
 
 6. **Commit and push**:
    ```bash
-   git -C C:/workspace/necrophage add -A
-   git -C C:/workspace/necrophage commit -m "<concise summary>\n\nCo-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
-   git -C C:/workspace/necrophage push origin master
+   git -C <project_dir> add -A
+   git -C <project_dir> commit -m "<concise summary>\n\nCo-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+   git -C <project_dir> push origin master
    ```
 
 7. **Loop** — go back to step 1 with the updated TODO.
