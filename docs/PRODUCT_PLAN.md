@@ -17,104 +17,172 @@ Necrophage is an isometric action RPG built in Rust + Bevy. The player is a biol
 
 ---
 
-## MVP Scope
-
-Vertical slice: jail escape → one district → one mob boss questline → world destruction trigger. Playable in ~15 minutes.
-
----
-
 ## Feature Set
 
 ### 1. Tile World (3D, Isometric Orthographic)
 
-- 3D tile grid: floor tiles, wall tiles, door tiles
-- Tiles defined in a data structure (2D array of tile types per level)
-- Bevy primitive meshes for tiles at MVP (no asset pipeline needed yet)
-- Camera: orthographic, fixed isometric angle, follows active entity
+- 3D tile grid: floor, wall, door, locked-door tile types
+- Large procedurally generated world (~250×380 tiles) with distinct zones stitched together
+- Camera: orthographic, fixed isometric angle, follows active entity, mouse-wheel zoom, trauma-based shake
 
-### 2. Player Movement
+### 2. Player Movement & Combat
 
-- WASD moves the active controlled entity on the tile grid
-- Smooth interpolation between tiles (not instant snap)
-- Collision: cannot move into wall tiles or occupied tiles
-- Active entity switching: Tab cycles between all possessed entities
+- WASD grid-based movement (7.5 u/s) with smooth lerp interpolation
+- Dash mechanic (14.0 u/s burst, 0.09s duration, 0.8s cooldown)
+- Melee attacks with arc telegraphs (Jab / Broad sweep); attack-recovery slowdown
+- Ranged attacks for enemies (projectile spawning)
+- Hitstop timer freezes simulation briefly on heavy hits
+- Entity-separation collision; walls and locked doors block movement
 
-### 3. Jail Scene (Level 1)
-
-- Procedurally generated jail: player cell, adjacent NPC prisoner cell, corridor, exit
-- NPC prisoner AI: breaks out of their cell on game start (scripted event)
-- Breakout event triggers player cell door opening
-- Player can follow NPC through corridor to exit
-- One guard enemy blocking exit (first combat encounter)
-
-### 4. Real-Time ARPG Combat
-
-- Enemies patrol or chase player on sight
-- Player attacks with J key or left-click — melee strike
-- Attack has cooldown, damage, knockback
-- Enemies have HP bar visible above them
-- Death: enemy drops a biomass orb that auto-collects on proximity
-
-### 5. Biomass & Growth System
+### 3. Biomass & Growth System
 
 Biomass is the core currency — it drives everything.
 
-| Biomass Threshold | Effect                                                                                                          |
-| ----------------- | --------------------------------------------------------------------------------------------------------------- |
-| 0–10             | Starting size. Single, small entity. Basic melee.                                                               |
-| 11–30            | Slight visual growth. HP/damage/speed +30%. Can infect 1 host.                                                  |
-| 31–75            | Visible size increase (+60%). HP/damage +70%, speed +20%. Can control 2 entities simultaneously.               |
-| 76–150           | Large size (+100%). HP/damage +130%, speed +30%. Control 3 entities.                                            |
-| 151+              | Apex form (+160%). HP/damage +250%, speed +40%.                                                                 |
+| Biomass Threshold | Tier  | Effect                                                          |
+| ----------------- | ----- | --------------------------------------------------------------- |
+| 0–10             | Tiny  | Starting size. Single, small entity. Basic melee.              |
+| 11–30            | Small | Slight visual growth. HP/damage/speed +30%. Can infect 1 host. |
+| 31–75            | Medium| Visible size increase. HP/damage +70%, speed +20%. 2 swarm slots.|
+| 76–150           | Large | Large size. HP/damage +130%, speed +30%. 3 swarm slots.        |
+| 151+             | Apex  | Apex form. HP/damage +250%, speed +40%.                        |
 
-**Growth mechanics:**
+- **Visual scale**: entity mesh scales with biomass tier
+- **Stat scaling**: HP, damage, speed scale at each tier
+- **PsychicPower**: total lifetime biomass collected; drives swarm capacity and ability potency
 
-- **Visual scale**: entity mesh scales up proportionally to biomass tier
-- **Stat scaling**: HP and damage scale at each tier
-- **Infection/possession**: on kill, hold E to infect corpse — it becomes a controlled entity. Costs no biomass but consumes a control slot.
-- **Parasite subtypes**: at thresholds, player can spawn a new parasite body from biomass. These are permanent controlled units.
-- **Psychic control**: number of simultaneously controlled entities is proportional to biomass tier. Losing one frees a slot.
+### 4. Psychic Swarm System
 
-### 6. NPC Faction — The Liberator
+Seven distinct creature types, unlocked by PsychicPower thresholds and costing biomass to summon:
 
-Single named NPC (the prisoner who freed you). Acts as quest giver.
+| Creature    | Cost  | Role                        |
+| ----------- | ----- | --------------------------- |
+| Scuttler    | 15 bm | Basic melee runner          |
+| Grasper     | 25 bm | Melee with grab/control     |
+| Ravager     | 40 bm | Heavy melee berserker       |
+| Spitter     | 35 bm | Ranged acid attack          |
+| Voidthrall  | 60 bm | Psychic ranged              |
+| Psychovore  | 90 bm | Area mind-blast             |
+| Colossoid   | 180 bm| Titan frontliner            |
 
-MVP questline:
+Each creature has a basic attack and a strong ability. Max simultaneous active swarm members is capped by current PsychicPower tier.
 
-1. **Escape** — follow them out of the jail
-2. **Hit job** — kill a rival gang lieutenant in the district
-3. **Confrontation** — they realize what you are and either flee or fight
-4. **Betrayal** — consume them for a large biomass reward (optional but foreshadowed)
+### 5. Harvest Window
 
-The liberator has dialogue displayed as a simple text overlay. No voiced acting at MVP.
+- When an enemy HP drops to ~12%, a 2.5s timed window opens
+- Enemy pulses color: green = health reward, red = biomass reward, grey = nothing
+- Press `F` near the enemy to harvest: player snaps to enemy position, reward applied, enemy killed instantly
+- Window expires harmlessly if ignored; enemy resumes fighting
+- Does not trigger on boss enemies
 
-### 7. District (Level 2)
+### 6. Infection & Possession
 
-- Procedurally generated district: streets, alleys, buildings, sewer entrance
-- Enemy factions: street gang members, one elite lieutenant (mini-boss)
-- Civilians that flee on sight (can be consumed for small biomass)
-- One locked building: mob boss location
+- On kill, hold `E` near corpse to infect/possess — entity becomes a controlled unit
+- `Tab` cycles between all possessed entities
+- Number of simultaneously controlled entities capped by PsychicPower
 
-### 8. Mob Boss Encounter
+### 7. NPC & Dialogue
 
-- Named mob boss NPC with idle dialogue
-- Accept the hit job quest from the liberator — boss becomes hostile
-- Boss fight: elevated HP, multiple attack patterns, spawns adds
-- On death: large biomass reward, district cleared state
+- Liberator NPC: state machine (Imprisoned → Breaking Out → Leading → Awaiting → Confrontation → Gone)
+- DialogueQueue: VecDeque of text lines displayed as UI overlay with speaker name
+- Dialogue gates narrative events and quest progression
 
-### 9. World Destruction Ending
+### 8. Quest System
 
-- Defeat the district boss to trigger the ending sequence
-- Screen overlay with text narration describing the parasite's spread consuming the city
-- MVP ending is narrative, not a separate playable sequence
+Stages: **Escape → FactionHunt → ArmyInvasion → FinalBattle → Victory**
 
-### 10. Population Density
+- Escape: follow Liberator out of jail
+- FactionHunt: work with / against one or more of the 3 factions
+- ArmyInvasion: General Marak's forces converge
+- FinalBattle: defeat TankSubBoss, then General Marak
+- Victory: ending narration plays
 
-- Each level tracks a population density counter (total enemies + civilians)
-- Every kill decrements the density; shown in the HUD as "Population: X/Y"
-- When density reaches 0 in the district, a boss and 2 helpers spawn
-- Defeating the boss ends the game
-- Debug command: `set_density <n>` to manually set the density counter
+### 9. Faction System
+
+Three independent factions, each with a boss, job targets, and resolution state:
+
+| Faction   | Boss            | Zone       |
+| --------- | --------------- | ---------- |
+| Syndicate | Don Varro       | Syndicate HQ |
+| Precinct  | Chief Harlan    | Police Precinct |
+| Covenant  | The Prophet     | Covenant Hideout |
+
+- FactionProgress per faction: Untouched → PlanAccepted → JobComplete → Resolved
+- Boss encounter: within 5 tiles, offer deal (`F`); accept job, complete it, return for reward (150 bm orb)
+- Alternatively: kill boss directly for large biomass
+- Consume defeated boss (`E`) or let them walk away (drops 80 bm orb)
+
+### 10. 3-Phase Boss Encounters
+
+All faction bosses (and the General) use an explicit 3-phase state machine:
+
+- **Phase 1** (100–66% HP): base attack pattern
+- **Phase 2** (66–33% HP): enhanced pattern, faster; boss becomes Invincible briefly; inter-phase adds spawn (must be killed to continue)
+- **Phase 3** (33–0% HP): enrage pattern
+
+Inter-phase adds vary by boss:
+- Varro: bodyguard remnants
+- Harlan: wounded officers
+- Prophet: cultist shards
+
+Arena doors lock on boss proximity trigger; unlock on boss death. Saves disabled during boss fights with HUD hint.
+
+### 11. General Marak (Final Boss)
+
+Two-stage sequential fight:
+
+1. **TankSubBoss** — large mech-tank (wide box mesh, ~600 HP), heavy cannon attacks with telegraph markers
+2. **General Marak** — humanoid mech-general, Invincible until TankSubBoss dies; 4-phase fight with existing patterns; dialogue plays on tank death ("The General steps from the wreckage")
+
+### 12. Procedural World Generation
+
+All zones generated from a seeded RNG (`LevelSeed`); fully reproducible:
+
+| Zone         | Generator          | Contents                                      |
+| ------------ | ------------------ | --------------------------------------------- |
+| Jail         | `jail.rs`          | Player cell, NPC cell, guard room, exit       |
+| Hub          | `hub.rs`           | Safe transition zone between jail and district|
+| District     | `district.rs`      | Streets, buildings, enemies, civilians        |
+| Buildings    | `building.rs`      | Generic / gang hideout / boss HQ interiors    |
+| Syndicate HQ | `syndicate.rs`     | Varro's territory                             |
+| Precinct     | `precinct.rs`      | Harlan's territory                            |
+| Covenant     | `covenant.rs`      | Prophet's territory                           |
+| Fortress     | `fortress.rs`      | General Marak's final arena                   |
+
+Entity zone-suspension: entities >22 tiles from player are `Suspended` (AI disabled); re-activate at 18 tiles.
+
+### 13. Population Density
+
+- Tracks all enemy/civilian deaths
+- HUD shows "Population: X/Y"
+- Density reaching 0 triggers district-level boss spawn
+
+### 14. Save System
+
+- 4 save slots; JSON serialization via `serde_json`
+- Cross-platform save dirs (`dirs` crate)
+- Persists: biomass, tier, quest state, boss_defeated, position, HP, seed, faction_progress, swarm_unlocks, psychic_power
+- Saves blocked during boss fights
+
+### 15. Menus & UI
+
+- Main menu: New Game, Load Slot (4), Exit
+- Pause menu: two-level layout — Main (Continue / Save / Load / Back) → Save sub-screen (4 slots) or Load sub-screen (4 slots)
+- HUD: biomass counter, quest objective, population density, HP bar, damage vignette red-flash, "YOU DIED" overlay
+- Minimap: 60×60 tile viewport centered on player (3 px/tile, 183×183 px fixed image), toggleable overlay, marks player and enemies
+
+### 16. Ending
+
+- Triggered by General Marak's death
+- 3-part fade-in narration describing the parasite's spread consuming the world
+- EndingPhase state machine: None → FadingIn → Narration → Done
+
+### 17. Debug Toolchain
+
+- `--features debug`: bevy-inspector-egui ECS inspector, Bevy Remote Protocol (BRP) API
+- In-game console with commands (`set_density`, etc.)
+- FPS overlay
+- `--features profile`: Chrome tracing output (`trace_event.json`, compatible with Perfetto / chrome://tracing)
+- Headless binary (`bin/headless.rs`) for server/CI use
 
 ---
 
@@ -124,91 +192,91 @@ The liberator has dialogue displayed as a simple text overlay. No voiced acting 
 
 ```
 src/
-  main.rs              # App setup, plugin registration only
-  camera.rs            # Isometric camera plugin, follow system
+  main.rs              # App entry point; runs necrophage::run()
+  lib.rs               # Plugin registry, HUD systems
   player.rs            # Player entity, ActiveEntity resource
-  movement.rs          # WASD input, tile collision, transform sync
-  biomass.rs           # Biomass resource, orb pickup, growth thresholds
-  combat.rs            # Health, Attack, enemy AI state machine, death
-  possession.rs        # Infection, Controlled component, ControlSlots
-  npc.rs               # NPC component, liberator scripted AI
-  dialogue.rs          # Dialogue UI overlay
-  quest.rs             # Quest steps, advancement conditions
-  ending.rs            # World destruction condition and sequence
+  movement.rs          # WASD input, dash, tile collision, transform sync
+  biomass.rs           # Biomass resource, PsychicPower, orb pickup, growth tiers
+  combat.rs            # Health, Attack, enemy AI, damage events, hitstop, HP bars
+  swarm.rs             # Swarm creature types, summon system, capacity gating
+  npc.rs               # Liberator NPC scripted state machine
+  dialogue.rs          # Dialogue queue UI overlay
+  quest.rs             # Quest stages, advancement conditions
+  faction.rs           # 3-faction progress, boss deals, job completion
+  camera.rs            # Isometric camera, shake, zoom
+  menu.rs              # Main menu, pause menu (sub-screens)
+  ending.rs            # Ending sequence and narration
+  save.rs              # 4-slot save/load, SaveData struct
+  minimap.rs           # Minimap viewport, texture rendering
+  population.rs        # Population density tracking
   world/
-    mod.rs             # WorldPlugin, TileMap resource
+    mod.rs             # GameState, PopulationDensity, BossFightActive, GameRng
     tile.rs            # TileType enum, mesh spawning
-    map.rs             # Map dimensions, tile lookup
+    map.rs             # TileMap, A* pathfinding, blit
   levels/
-    mod.rs             # LevelPlugin, Level state enum
-    generator.rs       # LevelGenerator trait, LevelParams, LevelSeed
-    jail.rs            # Jail procedural generator (BSP/room-corridor)
-    district.rs        # District procedural generator (grid-of-rooms)
-```
-
-### Procedural Level Generation
-
-Both levels are procedurally generated using a seeded RNG (reproducible from a seed).
-
-**Jail generator** (BSP or room-and-corridor):
-
-- Guarantees: player cell, adjacent NPC cell, guard room, exit corridor
-- Randomizes: cell count, corridor layout, guard positions
-
-**District generator** (grid-of-rooms):
-
-- Guarantees: entry point, mob boss building, lieutenant spawn, sewer exit
-- Randomizes: street layout, building sizes, civilian/enemy density
-
-`LevelSeed` resource stores the current seed and prints to console for debugging.
-
-### Plugin Registration Order
-
-```
-WorldPlugin
-CameraPlugin
-PlayerPlugin
-MovementPlugin
-BiomassPlugin
-CombatPlugin
-PossessionPlugin
-NpcPlugin
-DialoguePlugin
-QuestPlugin
-LevelPlugin
-EndingPlugin
+    mod.rs             # LevelPlugin, Portal system, entity suspension
+    generator.rs       # LevelGenerator trait, SpawnInfo, BuildingKind
+    world.rs           # World overmap stitcher
+    jail.rs            # Jail generator
+    district.rs        # District generator
+    hub.rs             # Hub zone generator
+    building.rs        # Building interior generator
+    syndicate.rs       # Syndicate HQ generator
+    precinct.rs        # Precinct generator
+    covenant.rs        # Covenant hideout generator
+    fortress.rs        # Fortress / final arena generator
+  boss/
+    mod.rs             # Shared boss components, BossNarrativePhase, inter-phase systems
+    varro.rs           # Don Varro AI
+    harlan.rs          # Chief Harlan AI (ShieldWall, TacticalStrike)
+    prophet.rs         # The Prophet AI (Blink, PsychicControl)
+    general.rs         # General Marak AI (TankSubBoss + 4-phase Marak)
+  debug/
+    mod.rs             # DebugPlugin aggregator
+    inspector.rs       # bevy-inspector-egui
+    console.rs         # In-game debug console
+    commands.rs        # Console command handlers
+    fps.rs             # FPS overlay
+    remote.rs          # BRP remote API
+  bin/
+    headless.rs        # Headless/server entry point
 ```
 
 ### Dependencies
 
-- `bevy = "0.15"`
-- `rand` — seeded RNG for procedural generation
+- `bevy = "0.15"` with `dynamic_linking`
+- `rand = "0.8"` — seeded RNG
+- `serde = "1"` + `serde_json = "1"` — save serialization
+- `dirs = "5"` — cross-platform save paths
+- `bevy-inspector-egui = "0.28"` (optional, debug feature)
+- `tracing-chrome = "0.7"` + `tracing-subscriber = "0.3"` (optional, profile feature)
 
 ---
 
 ## Implementation Phases
 
-| Phase | Description                  | Milestone                                              | Status |
-| ----- | ---------------------------- | ------------------------------------------------------ | ------ |
-| 0     | Foundation                   | Project compiles                                       | ✅ done |
-| 0.5   | Workspace + debug toolchain  | Cargo workspace, unit tests, console, inspector, BRP  | ✅ done |
-| 1     | Tile world plugin            | Jail tile grid renders isometrically                   | ✅ done |
-| 2     | Camera plugin                | Camera follows active entity, shake, zoom              | ✅ done |
-| 3     | Player & movement            | WASD moves player, 8-dir, walls block, smooth lerp     | ✅ done |
-| 4     | Biomass & growth             | Orb pickup, player visually grows, all controlled scale| ✅ done |
-| 5     | Combat                       | Enemy chases, attacks, dies, civilian drops, knockback        | ✅ done |
-| 6     | Infection & possession       | Hold E to possess, Tab to switch                       | ✅ done |
-| 7     | NPC & dialogue               | Liberator breaks out, dialogue shows                   | ✅ done |
-| 8     | Quest system                 | Steps advance, betrayal path, single-fire guard        | ✅ done |
-| 9     | Procedural level gen         | Jail + district + buildings, stack-based entry/exit    | ✅ done |
-| 10    | Ending                       | Boss dead = ending screen                              | ✅ done |
-| 11    | Polish                       | Map scale 2×, 4-tile doors, player size, shared tile assets, no shadows | ✅ done |
-| 12    | Combat feel + density        | Attack slow, faster movement, biomass speed bonus, population density system, density-triggered boss spawn | ✅ done |
-
----
-
-## Out of Scope for MVP
-
-- Asset pipeline, sprite sheets, or 3D models (use primitive meshes)
-- Sound and music
-- Main menu
+| Phase | Description                  | Milestone                                                                                               | Status  |
+| ----- | ---------------------------- | ------------------------------------------------------------------------------------------------------- | ------- |
+| 0     | Foundation                   | Project compiles                                                                                        | ✅ done |
+| 0.5   | Debug toolchain              | Unit tests, console, inspector, BRP                                                                     | ✅ done |
+| 1     | Tile world                   | Jail tile grid renders isometrically                                                                    | ✅ done |
+| 2     | Camera                       | Camera follows active entity, shake, zoom                                                               | ✅ done |
+| 3     | Player & movement            | WASD, 8-dir, walls block, smooth lerp                                                                   | ✅ done |
+| 4     | Biomass & growth             | Orb pickup, player visually grows, all controlled scale                                                 | ✅ done |
+| 5     | Combat                       | Enemy chases, attacks, dies, civilian drops, knockback                                                  | ✅ done |
+| 6     | Infection & possession       | Hold E to possess, Tab to switch                                                                        | ✅ done |
+| 7     | NPC & dialogue               | Liberator breaks out, dialogue shows                                                                    | ✅ done |
+| 8     | Quest system                 | Steps advance, betrayal path, single-fire guard                                                         | ✅ done |
+| 9     | Procedural level gen         | Jail + district + buildings, stack-based entry/exit                                                     | ✅ done |
+| 10    | Ending                       | Boss dead = ending screen                                                                               | ✅ done |
+| 11    | Polish                       | Map scale, 4-tile doors, shared tile assets, no shadows                                                 | ✅ done |
+| 12    | Combat feel + density        | Attack slow, dash, biomass speed bonus, population density, density-triggered boss                      | ✅ done |
+| 13    | Flat crate structure         | Collapsed workspace → single `src/` crate                                                              | ✅ done |
+| 14    | 3-faction arc                | Varro/Harlan/Prophet bosses, per-faction zones, FactionProgress, deal/betray/spare                     | ✅ done |
+| 15    | Swarm system                 | 7 creature types, dual attacks, PsychicPower gating, save persistence                                  | ✅ done |
+| 16    | World expansion              | ~250×380 world, hub/syndicate/precinct/covenant/fortress zones, zone suspension                        | ✅ done |
+| 17    | UI polish                    | Pause sub-screens (Save/Load), minimap centered on player                                               | ✅ done |
+| 18    | Harvest window               | Low-HP timed harvest, color-coded reward, F-key snap kill                                               | ✅ done |
+| 19    | Psychic power stat           | PsychicPower resource replaces BiomassTier for stat scaling; swarm capacity keyed to it                | ✅ done |
+| 20    | 3-phase boss system          | Explicit phase state machine, inter-phase adds, arena door locking, save disable during fights          | ✅ done |
+| 21    | General Marak redesign       | TankSubBoss pre-fight, Marak Invincible until tank dies, dialogue on phase transition                   | ✅ done |
