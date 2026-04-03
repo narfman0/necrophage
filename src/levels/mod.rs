@@ -15,7 +15,7 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use bevy::ecs::system::SystemParam;
 
 use crate::biomass::{Biomass, BiomassTier};
-use crate::boss::{GeneralBoss, HarlanBoss, ProphetBoss, VarroBoss};
+use crate::boss::{BossNarrativePhase, GeneralBoss, HarlanBoss, ProphetBoss, VarroBoss};
 use crate::combat::{
     spawn_enemy, AttackMode, BossAI, Civilian, Elite, Enemy, Health,
     MeleeAttackShape, MobBoss, PatrolTimer,
@@ -545,7 +545,7 @@ fn spawn_faction_boss(
     };
     let e = spawn_enemy(commands, meshes, materials, GridPos { x: wx, y: wy }, hp, dmg, color);
     let mut ec = commands.entity(e);
-    ec.insert(MobBoss).insert(BossAI::default()).insert(BossRelation::Hostile).insert(fid).insert(LevelEntity);
+    ec.insert(MobBoss).insert(BossAI::default()).insert(BossRelation::Hostile).insert(fid).insert(LevelEntity).insert(BossNarrativePhase::default());
     match fid {
         FactionId::Syndicate => { ec.insert(VarroBoss); }
         FactionId::Precinct  => { ec.insert(HarlanBoss); }

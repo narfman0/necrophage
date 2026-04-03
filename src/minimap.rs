@@ -122,10 +122,11 @@ fn build_image(
             let ty = origin_y + dy;
             let color = if map.in_bounds(tx, ty) {
                 match map.tile_at(tx, ty) {
-                    TileType::Floor => [60u8, 60, 60, 220],
-                    TileType::Wall  => [20, 20, 20, 220],
-                    TileType::Door  => [120, 80, 30, 220],
-                    TileType::Exit  => [40, 160, 220, 220],
+                    TileType::Floor      => [60u8, 60, 60, 220],
+                    TileType::Wall       => [20, 20, 20, 220],
+                    TileType::Door       => [120, 80, 30, 220],
+                    TileType::LockedDoor => [180, 20, 20, 220],
+                    TileType::Exit       => [40, 160, 220, 220],
                 }
             } else {
                 [10, 10, 10, 220] // out-of-bounds void

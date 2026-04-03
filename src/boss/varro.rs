@@ -9,6 +9,7 @@
 use bevy::prelude::*;
 
 use crate::combat::{spawn_enemy, BossAI, Corpse, DamageEvent, Dying, Health, MobBoss};
+use super::BossNarrativePhase;
 use crate::world::Suspended;
 use crate::faction::BossRelation;
 use crate::movement::GridPos;
@@ -34,7 +35,7 @@ pub fn varro_ai_system(
     active: Res<ActiveEntity>,
     active_tf: Query<&Transform, Without<MobBoss>>,
     mut bosses: Query<
-        (&Transform, &GridPos, &mut BossAI, &Health, &BossRelation),
+        (&Transform, &GridPos, &mut BossAI, &Health, &BossRelation, Option<&BossNarrativePhase>),
         (With<VarroBoss>, With<MobBoss>, Without<Suspended>, Without<Dying>, Without<Corpse>),
     >,
     friendlies: Query<(Entity, &Transform), (With<Friendly>, Without<Dying>)>,
@@ -42,11 +43,15 @@ pub fn varro_ai_system(
     time: Res<Time>,
 ) {
     let Ok(_target_tf) = active_tf.get(active.0) else { return };
-    for (boss_tf, boss_gp, mut ai, hp, rel) in &mut bosses {
+    for (boss_tf, boss_gp, mut ai, hp, rel, np) in &mut bosses {
         if *rel == BossRelation::Surrendered {
             continue;
         }
         if *rel != BossRelation::Hostile {
+            continue;
+        }
+        // Pause attack cycle during inter-phase.
+        if np.map_or(false, |n| n.in_interphase) {
             continue;
         }
         ai.phase_timer -= time.delta_secs();

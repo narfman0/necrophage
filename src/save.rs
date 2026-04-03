@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::biomass::{Biomass, BiomassTier, PsychicPower};
+use crate::world::BossFightActive;
 use crate::combat::Health;
 use crate::faction::FactionProgress;
 use crate::levels::LevelSeed;
@@ -77,6 +78,7 @@ impl Plugin for SavePlugin {
 
 fn handle_save_game(
     mut events: EventReader<SaveGame>,
+    boss_fight_active: Res<BossFightActive>,
     biomass: Res<Biomass>,
     tier: Res<BiomassTier>,
     psychic_power: Res<PsychicPower>,
@@ -89,6 +91,11 @@ fn handle_save_game(
     active: Res<ActiveEntity>,
     player_query: Query<(&GridPos, &Health), With<Player>>,
 ) {
+    if boss_fight_active.0 {
+        // Drain the event queue so they don't accumulate.
+        for _ in events.read() {}
+        return;
+    }
     for ev in events.read() {
         let Ok((pos, hp)) = player_query.get(active.0) else {
             continue;

@@ -17,7 +17,7 @@ use crate::player::ActiveEntity;
 use crate::swarm::SwarmMember;
 use crate::world::{CurrentMap, Friendly, LevelEntity};
 
-use super::{Controlled, ProphetBoss};
+use super::{BossNarrativePhase, Controlled, ProphetBoss};
 
 pub const PROPHET_HP: f32 = 280.0;
 pub const PROPHET_DMG: f32 = 22.0;
@@ -36,7 +36,7 @@ pub fn prophet_ai_system(
     mut materials: ResMut<Assets<StandardMaterial>>,
     _active: Res<ActiveEntity>,
     mut bosses: Query<
-        (&mut Transform, &mut GridPos, &mut BossAI, &Health, &BossRelation),
+        (&mut Transform, &mut GridPos, &mut BossAI, &Health, &BossRelation, Option<&BossNarrativePhase>),
         (With<ProphetBoss>, With<MobBoss>, Without<Suspended>, Without<Dying>, Without<Corpse>),
     >,
     friendlies: Query<(Entity, &Transform), (With<Friendly>, Without<Dying>, Without<MobBoss>)>,
@@ -46,11 +46,14 @@ pub fn prophet_ai_system(
     mut rng: ResMut<crate::world::GameRng>,
     time: Res<Time>,
 ) {
-    for (mut boss_tf, mut boss_gp, mut ai, hp, rel) in &mut bosses {
+    for (mut boss_tf, mut boss_gp, mut ai, hp, rel, np) in &mut bosses {
         if *rel == BossRelation::Surrendered {
             continue;
         }
         if *rel != BossRelation::Hostile {
+            continue;
+        }
+        if np.map_or(false, |n| n.in_interphase) {
             continue;
         }
         ai.phase_timer -= time.delta_secs();

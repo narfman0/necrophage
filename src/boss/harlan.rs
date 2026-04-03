@@ -15,7 +15,7 @@ use crate::movement::GridPos;
 use crate::player::ActiveEntity;
 use crate::world::Friendly;
 
-use super::{spawn_telegraph, HarlanBoss};
+use super::{spawn_telegraph, BossNarrativePhase, HarlanBoss};
 
 pub const HARLAN_HP: f32 = 350.0;
 pub const HARLAN_DMG: f32 = 18.0;
@@ -44,7 +44,7 @@ pub fn harlan_ai_system(
     active: Res<ActiveEntity>,
     active_tf: Query<&Transform, Without<MobBoss>>,
     mut bosses: Query<
-        (Entity, &Transform, &GridPos, &mut BossAI, &Health, &BossRelation),
+        (Entity, &Transform, &GridPos, &mut BossAI, &Health, &BossRelation, Option<&BossNarrativePhase>),
         (With<HarlanBoss>, With<MobBoss>, Without<Suspended>, Without<Dying>, Without<Corpse>),
     >,
     friendlies: Query<(Entity, &Transform), (With<Friendly>, Without<Dying>)>,
@@ -70,11 +70,14 @@ pub fn harlan_ai_system(
     }
 
     let Ok(target_tf) = active_tf.get(active.0) else { return };
-    for (boss_entity, boss_tf, boss_gp, mut ai, hp, rel) in &mut bosses {
+    for (boss_entity, boss_tf, boss_gp, mut ai, hp, rel, np) in &mut bosses {
         if *rel == BossRelation::Surrendered {
             continue;
         }
         if *rel != BossRelation::Hostile {
+            continue;
+        }
+        if np.map_or(false, |n| n.in_interphase) {
             continue;
         }
         ai.phase_timer -= time.delta_secs();

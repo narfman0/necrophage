@@ -72,6 +72,10 @@ pub struct PopulationDensity {
 #[derive(Resource, Default)]
 pub struct PlayerDied(pub bool);
 
+/// Set to true while a boss fight arena is active. Saving is blocked while this is set.
+#[derive(Resource, Default, Reflect)]
+pub struct BossFightActive(pub bool);
+
 /// Fired when the player chooses "New Game" from the main menu.
 /// Systems across the codebase listen to this to reset their state.
 #[derive(Event)]
@@ -88,9 +92,11 @@ impl Plugin for WorldPlugin {
             .init_resource::<PlayerSpeedBonus>()
             .init_resource::<PopulationDensity>()
             .init_resource::<PlayerDied>()
+            .init_resource::<BossFightActive>()
             .add_event::<NewGame>()
             .register_type::<PlayerSpeedBonus>()
             .register_type::<PopulationDensity>()
+            .register_type::<BossFightActive>()
             .init_state::<GameState>();
     }
 }

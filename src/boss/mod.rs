@@ -5,11 +5,12 @@ pub mod varro;
 
 use bevy::prelude::*;
 
-use crate::combat::{DamageEvent, Dying, Corpse, MobBoss};
+use crate::combat::{spawn_enemy, DamageEvent, Dying, Corpse, MobBoss};
 use crate::world::Suspended;
 use crate::faction::BossRelation;
 use crate::movement::GridPos;
 use crate::world::{CurrentMap, GameState, LevelEntity};
+use crate::combat::Invincible;
 
 // ── Boss marker components ────────────────────────────────────────────────────
 
@@ -24,6 +25,41 @@ pub struct ProphetBoss;
 
 #[derive(Component)]
 pub struct GeneralBoss;
+
+// ── Narrative phase components ────────────────────────────────────────────────
+
+/// Tracks the 3-narrative-phase structure for faction bosses.
+/// Phase 1 (100-66% HP), Phase 2 (66-33% HP), Phase 3 (<33% HP).
+/// Inter-phase: boss is Invincible, adds must be killed to resume.
+#[derive(Component)]
+pub struct BossNarrativePhase {
+    pub phase: u8,
+    pub in_interphase: bool,
+    pub adds_spawned: bool,
+}
+
+impl Default for BossNarrativePhase {
+    fn default() -> Self {
+        Self { phase: 1, in_interphase: false, adds_spawned: false }
+    }
+}
+
+/// Marker on enemies spawned during an inter-phase wave.
+/// Removed when the entity dies; boss watches for all of its adds to be gone.
+#[derive(Component)]
+pub struct InterPhaseAdd {
+    pub boss: Entity,
+}
+
+// ── Events ────────────────────────────────────────────────────────────────────
+
+/// Fired when a boss's narrative phase changes, so boss-specific systems can
+/// spawn the appropriate inter-phase adds.
+#[derive(Event)]
+pub struct BossPhaseTransition {
+    pub boss: Entity,
+    pub new_phase: u8,
+}
 
 // ── Shared ability components ─────────────────────────────────────────────────
 
@@ -49,13 +85,16 @@ pub struct BossPlugin;
 impl Plugin for BossPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<BossRelation>()
+            .add_event::<BossPhaseTransition>()
             .add_systems(
                 Update,
                 (
-                    varro::varro_ai_system,
-                    harlan::harlan_ai_system,
+                    boss_narrative_phase_system,
+                    spawn_interphase_adds_system.after(boss_narrative_phase_system),
+                    varro::varro_ai_system.after(boss_narrative_phase_system),
+                    harlan::harlan_ai_system.after(boss_narrative_phase_system),
                     harlan::shield_expiry_system,
-                    prophet::prophet_ai_system,
+                    prophet::prophet_ai_system.after(boss_narrative_phase_system),
                     general::general_ai_system,
                     resolve_telegraphed_explosions,
                     resolve_controlled,
@@ -173,6 +212,92 @@ pub fn spawn_telegraph(
         })),
         Transform::from_translation(Vec3::new(pos.x, 0.05, pos.z)),
     ));
+}
+
+// ── Narrative phase management ────────────────────────────────────────────────
+
+/// HP fractions at which the boss transitions to phase 2 and 3.
+const PHASE_2_THRESHOLD: f32 = 0.66;
+const PHASE_3_THRESHOLD: f32 = 0.33;
+
+/// Monitors faction boss HP and handles narrative phase transitions.
+/// When HP crosses a threshold:
+///   - Boss becomes Invincible (adds must be killed before fight resumes)
+///   - Fires BossPhaseTransition event so the correct adds can be spawned
+/// When all inter-phase adds are dead, removes Invincible and resumes.
+fn boss_narrative_phase_system(
+    mut commands: Commands,
+    mut bosses: Query<
+        (Entity, &crate::combat::Health, &mut BossNarrativePhase, &BossRelation),
+        (With<MobBoss>, Without<GeneralBoss>, Without<Dying>, Without<Corpse>),
+    >,
+    adds: Query<&InterPhaseAdd>,
+    mut phase_events: EventWriter<BossPhaseTransition>,
+) {
+    for (boss_entity, hp, mut np, rel) in &mut bosses {
+        if *rel == BossRelation::Surrendered {
+            continue;
+        }
+        if *rel != BossRelation::Hostile {
+            continue;
+        }
+
+        // If in inter-phase, check whether all adds are dead.
+        if np.in_interphase {
+            let any_alive = adds.iter().any(|a| a.boss == boss_entity);
+            if !any_alive {
+                np.in_interphase = false;
+                np.adds_spawned = false;
+                commands.entity(boss_entity).remove::<Invincible>();
+            }
+            continue;
+        }
+
+        // Check for phase transitions (only move forward, never backward).
+        let frac = hp.current / hp.max;
+        let new_phase = if frac <= PHASE_3_THRESHOLD { 3 } else if frac <= PHASE_2_THRESHOLD { 2 } else { 1 };
+        if new_phase > np.phase {
+            np.phase = new_phase;
+            np.in_interphase = true;
+            np.adds_spawned = false;
+            commands.entity(boss_entity).insert(Invincible);
+            phase_events.send(BossPhaseTransition { boss: boss_entity, new_phase });
+        }
+    }
+}
+
+/// Spawns boss-type-specific inter-phase adds in response to BossPhaseTransition events.
+fn spawn_interphase_adds_system(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut events: EventReader<BossPhaseTransition>,
+    boss_query: Query<&GridPos, With<MobBoss>>,
+    varro_q: Query<(), With<VarroBoss>>,
+    harlan_q: Query<(), With<HarlanBoss>>,
+    prophet_q: Query<(), With<ProphetBoss>>,
+) {
+    for ev in events.read() {
+        let Ok(boss_gp) = boss_query.get(ev.boss) else { continue };
+
+        let (count, hp, dmg, color): (i32, f32, f32, Color) =
+            if varro_q.get(ev.boss).is_ok() {
+                (4, 20.0, 6.0, Color::srgb(0.85, 0.65, 0.05)) // faded bodyguards
+            } else if harlan_q.get(ev.boss).is_ok() {
+                (4, 22.0, 5.0, Color::srgb(0.4, 0.45, 0.55)) // wounded officers
+            } else if prophet_q.get(ev.boss).is_ok() {
+                (5, 18.0, 5.0, Color::srgb(0.35, 0.05, 0.05)) // cultist shards
+            } else {
+                continue;
+            };
+
+        for i in 0..count {
+            let offset_x = (i - count / 2) * 2;
+            let pos = GridPos { x: (boss_gp.x + offset_x).max(0), y: boss_gp.y + 2 };
+            let e = spawn_enemy(&mut commands, &mut meshes, &mut materials, pos, hp, dmg, color);
+            commands.entity(e).insert((LevelEntity, InterPhaseAdd { boss: ev.boss }));
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

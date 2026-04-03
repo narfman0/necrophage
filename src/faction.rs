@@ -8,7 +8,7 @@ use crate::dialogue::DialogueQueue;
 use crate::movement::GridPos;
 use crate::player::ActiveEntity;
 use crate::swarm::{CreatureKind, SwarmUnlocks};
-use crate::world::{GameState, LevelEntity};
+use crate::world::{tile::TileType, BossFightActive, CurrentMap, GameState, LevelEntity};
 
 // ── Faction identity ─────────────────────────────────────────────────────────
 
@@ -124,6 +124,15 @@ pub const SPARE_BIOMASS: f32 = 80.0;
 /// Biomass reward when the player returns after completing the plan job.
 pub const PLAN_REWARD_BIOMASS: f32 = 150.0;
 
+/// Chebyshev tile distance at which entering a boss room locks the arena doors.
+const ARENA_LOCK_DIST: i32 = 8;
+/// Maximum tile radius to search for Door tiles to lock around the boss position.
+const DOOR_LOCK_RADIUS: i32 = 20;
+
+/// Tile positions of Door tiles that were converted to LockedDoor for the active arena.
+#[derive(Resource, Default)]
+pub struct LockedArenaTiles(pub Vec<(i32, i32)>);
+
 // ── Events ────────────────────────────────────────────────────────────────────
 
 #[derive(Event)]
@@ -139,6 +148,7 @@ pub struct FactionPlugin;
 impl Plugin for FactionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FactionProgress>()
+            .init_resource::<LockedArenaTiles>()
             .add_event::<FactionJobCompleted>()
             .add_event::<FactionResolved>()
             .register_type::<FactionId>()
@@ -159,6 +169,8 @@ impl Plugin for FactionPlugin {
                     on_boss_killed,
                     on_faction_resolved.after(on_boss_killed),
                     on_general_killed,
+                    boss_arena_lock_system,
+                    boss_arena_unlock_system.after(on_faction_resolved),
                 )
                 .run_if(in_state(GameState::Playing)),
             );
@@ -526,6 +538,95 @@ fn on_faction_resolved(
             _ => {}
         }
     }
+}
+
+// ── Arena door locking ────────────────────────────────────────────────────────
+
+/// When the player first gets close to a non-resolved boss, convert all nearby
+/// Door tiles to LockedDoor so they cannot retreat or be followed out of the arena.
+/// Also sets BossFightActive which blocks saving.
+fn boss_arena_lock_system(
+    active: Res<ActiveEntity>,
+    player_pos: Query<&GridPos>,
+    bosses: Query<&GridPos, (With<MobBoss>, Without<Dying>, Without<Corpse>)>,
+    faction: Res<FactionProgress>,
+    mut map: ResMut<CurrentMap>,
+    mut locked_tiles: ResMut<LockedArenaTiles>,
+    mut boss_fight: ResMut<BossFightActive>,
+    mut tile_entities: Query<(Entity, &crate::world::tile::TilePos, &mut MeshMaterial3d<StandardMaterial>)>,
+    tile_assets: Res<crate::world::tile::TileAssets>,
+) {
+    if boss_fight.0 {
+        return;
+    }
+    let Ok(ppos) = player_pos.get(active.0) else { return };
+
+    for boss_gp in &bosses {
+        let dist = (boss_gp.x - ppos.x).abs().max((boss_gp.y - ppos.y).abs());
+        if dist > ARENA_LOCK_DIST {
+            continue;
+        }
+        // Don't lock if all factions already resolved (General fight has its own arena).
+        if faction.all_factions_resolved() {
+            continue;
+        }
+
+        // Find and lock all Door tiles near the boss.
+        let mut newly_locked = Vec::new();
+        for dy in -DOOR_LOCK_RADIUS..=DOOR_LOCK_RADIUS {
+            for dx in -DOOR_LOCK_RADIUS..=DOOR_LOCK_RADIUS {
+                let tx = boss_gp.x + dx;
+                let ty = boss_gp.y + dy;
+                if map.0.tile_at(tx, ty) == TileType::Door {
+                    map.0.set(tx, ty, TileType::LockedDoor);
+                    newly_locked.push((tx, ty));
+                }
+            }
+        }
+        if newly_locked.is_empty() {
+            continue;
+        }
+
+        // Swap tile entity material handles to locked-door (red) material.
+        for (_, tp, mut mat_handle) in &mut tile_entities {
+            if newly_locked.contains(&(tp.0, tp.1)) {
+                mat_handle.0 = tile_assets.locked_door_material.clone();
+            }
+        }
+
+        locked_tiles.0.extend(newly_locked);
+        boss_fight.0 = true;
+        break;
+    }
+}
+
+/// On FactionResolved, restore all LockedDoor tiles to Door and clear the arena lock.
+fn boss_arena_unlock_system(
+    mut events: EventReader<FactionResolved>,
+    mut map: ResMut<CurrentMap>,
+    mut locked_tiles: ResMut<LockedArenaTiles>,
+    mut boss_fight: ResMut<BossFightActive>,
+    mut tile_entities: Query<(&crate::world::tile::TilePos, &mut MeshMaterial3d<StandardMaterial>)>,
+    tile_assets: Res<crate::world::tile::TileAssets>,
+) {
+    if events.read().next().is_none() {
+        return;
+    }
+    for &(tx, ty) in &locked_tiles.0 {
+        if map.0.tile_at(tx, ty) == TileType::LockedDoor {
+            map.0.set(tx, ty, TileType::Door);
+        }
+    }
+
+    // Restore door material.
+    for (tp, mut mat_handle) in &mut tile_entities {
+        if locked_tiles.0.contains(&(tp.0, tp.1)) {
+            mat_handle.0 = tile_assets.door_material.clone();
+        }
+    }
+
+    locked_tiles.0.clear();
+    boss_fight.0 = false;
 }
 
 // ── Plan reward on return ─────────────────────────────────────────────────────
