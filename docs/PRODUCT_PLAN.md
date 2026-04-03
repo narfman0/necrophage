@@ -211,7 +211,4 @@ EndingPlugin
 
 - Asset pipeline, sprite sheets, or 3D models (use primitive meshes)
 - Sound and music
-- Save system
-- Multiple mob boss factions
-- Full world map beyond two levels
 - Main menu

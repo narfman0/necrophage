@@ -13,6 +13,8 @@ use crate::world::{tile::TileType, CurrentMap, GameState};
 
 /// Pixels drawn per tile in the minimap texture.
 const TILE_PX: u32 = 3;
+/// Half-radius of the viewport in tiles. The full viewport is (2*VIEW+1) × (2*VIEW+1).
+const MINIMAP_VIEW: i32 = 30;
 
 #[derive(Component)]
 pub struct MinimapPanel;
@@ -101,35 +103,49 @@ fn build_image(
     player: Option<GridPos>,
     enemies: &[GridPos],
 ) -> Image {
-    let w = map.width as u32 * TILE_PX;
-    let h = map.height as u32 * TILE_PX;
+    let diameter = (2 * MINIMAP_VIEW + 1) as u32;
+    let w = diameter * TILE_PX;
+    let h = diameter * TILE_PX;
     let mut data = vec![0u8; (w * h * 4) as usize];
 
+    // Center the viewport on the player, or the map center if no player.
+    let (cx, cy) = player
+        .map(|p| (p.x, p.y))
+        .unwrap_or((map.width as i32 / 2, map.height as i32 / 2));
+    let origin_x = cx - MINIMAP_VIEW;
+    let origin_y = cy - MINIMAP_VIEW;
+
     // Draw tiles.
-    for ty in 0..map.height {
-        for tx in 0..map.width {
-            let color = match map.tile_at(tx, ty) {
-                TileType::Floor => [60u8, 60, 60, 220],
-                TileType::Wall  => [20, 20, 20, 220],
-                TileType::Door  => [120, 80, 30, 220],
-                TileType::Exit  => [40, 160, 220, 220],
+    for dy in 0..=(2 * MINIMAP_VIEW) {
+        for dx in 0..=(2 * MINIMAP_VIEW) {
+            let tx = origin_x + dx;
+            let ty = origin_y + dy;
+            let color = if map.in_bounds(tx, ty) {
+                match map.tile_at(tx, ty) {
+                    TileType::Floor => [60u8, 60, 60, 220],
+                    TileType::Wall  => [20, 20, 20, 220],
+                    TileType::Door  => [120, 80, 30, 220],
+                    TileType::Exit  => [40, 160, 220, 220],
+                }
+            } else {
+                [10, 10, 10, 220] // out-of-bounds void
             };
-            paint_tile(&mut data, w, tx as u32, ty as u32, color);
+            paint_tile(&mut data, w, dx as u32, dy as u32, color);
         }
     }
 
-    // Draw enemies.
+    // Draw enemies (offset by viewport origin).
     for ep in enemies {
-        if map.in_bounds(ep.x, ep.y) {
-            paint_tile(&mut data, w, ep.x as u32, ep.y as u32, [220, 50, 50, 255]);
+        let dx = ep.x - origin_x;
+        let dy = ep.y - origin_y;
+        if dx >= 0 && dy >= 0 && dx <= 2 * MINIMAP_VIEW && dy <= 2 * MINIMAP_VIEW {
+            paint_tile(&mut data, w, dx as u32, dy as u32, [220, 50, 50, 255]);
         }
     }
 
-    // Draw player last so it's always on top.
-    if let Some(p) = player {
-        if map.in_bounds(p.x, p.y) {
-            paint_tile(&mut data, w, p.x as u32, p.y as u32, [50, 255, 80, 255]);
-        }
+    // Draw player last — always at dead center.
+    if player.is_some() {
+        paint_tile(&mut data, w, MINIMAP_VIEW as u32, MINIMAP_VIEW as u32, [50, 255, 80, 255]);
     }
 
     Image::new(
@@ -172,11 +188,27 @@ mod tests {
     }
 
     #[test]
-    fn build_image_dimensions_match_map() {
+    fn build_image_dimensions_are_fixed() {
         let map = TileMap::new(10, 8, TileType::Floor);
         let img = build_image(&map, None, &[]);
-        // Width = 10 * TILE_PX, height = 8 * TILE_PX
-        assert_eq!(img.texture_descriptor.size.width, 10 * TILE_PX);
-        assert_eq!(img.texture_descriptor.size.height, 8 * TILE_PX);
+        let expected = (2 * MINIMAP_VIEW as u32 + 1) * TILE_PX;
+        assert_eq!(img.texture_descriptor.size.width, expected);
+        assert_eq!(img.texture_descriptor.size.height, expected);
+    }
+
+    #[test]
+    fn build_image_player_at_center() {
+        // Map large enough that the player sits fully inside the viewport.
+        let size = 2 * MINIMAP_VIEW + 10;
+        let map = TileMap::new(size, size, TileType::Floor);
+        let player = GridPos { x: size / 2, y: size / 2 };
+        let img = build_image(&map, Some(player), &[]);
+
+        // Center pixel of the image should be the player green [50, 255, 80, 255].
+        let cx = MINIMAP_VIEW as u32 * TILE_PX;
+        let cy = MINIMAP_VIEW as u32 * TILE_PX;
+        let w = img.texture_descriptor.size.width;
+        let i = ((cy * w + cx) * 4) as usize;
+        assert_eq!(&img.data[i..i + 4], &[50, 255, 80, 255]);
     }
 }
