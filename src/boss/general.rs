@@ -137,6 +137,16 @@ pub fn general_ai_system(
             }
         }
 
+        // Guarantee ShieldCooldown exists on any frame we enter B/C HP range,
+        // even if the boss skipped phase A (HP dropped past 75% between ticks).
+        if hp_frac > 0.25 && hp_frac <= 0.75 && !has_shield {
+            commands.entity(boss_entity).insert(ShieldCooldown {
+                interval_timer: SHIELD_INTERVAL,
+                active_timer: 0.0,
+                shielded: false,
+            });
+        }
+
         ai.phase_timer -= dt;
         if ai.phase_timer > 0.0 {
             continue;
