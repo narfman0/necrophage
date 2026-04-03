@@ -39,7 +39,7 @@ pub fn prophet_ai_system(
         (&mut Transform, &mut GridPos, &mut BossAI, &Health, &BossRelation),
         (With<ProphetBoss>, With<MobBoss>, Without<Suspended>, Without<Dying>, Without<Corpse>),
     >,
-    friendlies: Query<(Entity, &Transform), (With<Friendly>, Without<Dying>)>,
+    friendlies: Query<(Entity, &Transform), (With<Friendly>, Without<Dying>, Without<MobBoss>)>,
     swarm_members: Query<Entity, (With<SwarmMember>, Without<Controlled>, Without<Dying>)>,
     mut damage_events: EventWriter<DamageEvent>,
     map: Res<CurrentMap>,
