@@ -109,12 +109,6 @@ pub struct Negotiating {
 #[derive(Component)]
 pub struct FactionJobTarget(pub FactionId);
 
-/// Tracks how many civilians have been consumed in The Prophet's ritual zone.
-#[derive(Resource, Default, Reflect)]
-pub struct CovenantRitualCount(pub u32);
-
-pub const COVENANT_RITUAL_GOAL: u32 = 5;
-
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /// Chebyshev tile distance at which a boss offers a deal when approached.
@@ -145,13 +139,11 @@ pub struct FactionPlugin;
 impl Plugin for FactionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FactionProgress>()
-            .init_resource::<CovenantRitualCount>()
             .add_event::<FactionJobCompleted>()
             .add_event::<FactionResolved>()
             .register_type::<FactionId>()
             .register_type::<BossRelation>()
             .register_type::<FactionProgress>()
-            .register_type::<CovenantRitualCount>()
             .add_systems(
                 Update,
                 (
