@@ -116,7 +116,7 @@ pub fn resolve_controlled(
 /// Bosses chase the active entity when Hostile (basic movement toward player).
 fn boss_movement_system(
     active: Res<crate::player::ActiveEntity>,
-    player_gp: Query<&GridPos>,
+    player_gp: Query<&GridPos, Without<MobBoss>>,
     mut bosses: Query<
         (&mut GridPos, &Transform, &BossRelation),
         (With<MobBoss>, Without<Suspended>, Without<Dying>, Without<Corpse>),
