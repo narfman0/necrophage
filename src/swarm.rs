@@ -10,6 +10,7 @@ use crate::combat::{
 use crate::dialogue::DialogueQueue;
 use crate::movement::{AttackRecovery, Body, GridPos, MoveDir};
 use crate::player::{ActiveEntity, Player};
+use crate::boss::Controlled;
 use crate::world::{CurrentMap, Friendly, GameState};
 
 // ── Components ────────────────────────────────────────────────────────────────
@@ -393,17 +394,24 @@ fn swarm_follow_system(
 
 /// Override MoveDir for non-active swarm members when enemies are in line of sight.
 /// Melee members use A* to navigate; ranged members maintain their preferred firing band.
+/// Controlled members (Prophet's PsychicControl) target Friendly entities instead.
 fn swarm_ai_system(
     swarm: Res<Swarm>,
     active: Res<ActiveEntity>,
     all_transforms: Query<&Transform>,
     enemy_entities: Query<(Entity, &GridPos), (With<Enemy>, Without<Dying>, Without<Corpse>)>,
+    friendly_entities: Query<(Entity, &GridPos), (With<Friendly>, Without<Dying>)>,
     mut member_dirs: Query<(&mut MoveDir, Option<&AttackMode>, &GridPos, &mut EntityPath), With<SwarmMember>>,
+    controlled_q: Query<(), With<Controlled>>,
     map: Res<CurrentMap>,
     time: Res<Time>,
 ) {
-    // Collect current enemy positions once to avoid repeated borrow conflicts.
+    // Collect positions once to avoid repeated borrow conflicts.
     let enemy_positions: Vec<(Entity, GridPos, Vec3)> = enemy_entities
+        .iter()
+        .filter_map(|(e, gp)| all_transforms.get(e).ok().map(|tf| (e, *gp, tf.translation)))
+        .collect();
+    let friendly_positions: Vec<(Entity, GridPos, Vec3)> = friendly_entities
         .iter()
         .filter_map(|(e, gp)| all_transforms.get(e).ok().map(|tf| (e, *gp, tf.translation)))
         .collect();
@@ -417,48 +425,69 @@ fn swarm_ai_system(
         let Ok((mut move_dir, attack_mode, member_gp, mut path)) = member_dirs.get_mut(entity) else { continue };
         let member_pos = member_tf.translation;
 
-        // Find nearest enemy within sight range with LOS.
-        // Use squared distance for the range filter to avoid sqrt per candidate.
-        let nearest = enemy_positions
-            .iter()
-            .filter(|(_, _, epos)| {
-                let dx = member_pos.x - epos.x;
-                let dz = member_pos.z - epos.z;
-                dx * dx + dz * dz <= SWARM_SIGHT_RANGE_SQ
-            })
-            .filter(|(_, egp, _)| has_line_of_sight(&map.0, *member_gp, *egp))
-            .min_by_key(|(_, _, epos)| {
-                let dx = member_pos.x - epos.x;
-                let dz = member_pos.z - epos.z;
-                ((dx * dx + dz * dz) * 1000.0) as i32
-            });
+        let is_controlled = controlled_q.get(entity).is_ok();
 
-        let Some(&(_, enemy_gp, enemy_pos)) = nearest else { continue };
-        let dist = dist_xz(member_pos, enemy_pos);
+        // Find nearest target within sight range with LOS.
+        // Controlled members chase Friendly entities; normal members chase Enemies.
+        let nearest: Option<(Entity, GridPos, Vec3)> = if is_controlled {
+            friendly_positions
+                .iter()
+                .filter(|(fe, fgp, fpos)| {
+                    *fe != entity && {
+                        let dx = member_pos.x - fpos.x;
+                        let dz = member_pos.z - fpos.z;
+                        dx * dx + dz * dz <= SWARM_SIGHT_RANGE_SQ
+                    } && has_line_of_sight(&map.0, *member_gp, *fgp)
+                })
+                .min_by_key(|(_, _, fpos)| {
+                    let dx = member_pos.x - fpos.x;
+                    let dz = member_pos.z - fpos.z;
+                    ((dx * dx + dz * dz) * 1000.0) as i32
+                })
+                .copied()
+        } else {
+            enemy_positions
+                .iter()
+                .filter(|(_, _, epos)| {
+                    let dx = member_pos.x - epos.x;
+                    let dz = member_pos.z - epos.z;
+                    dx * dx + dz * dz <= SWARM_SIGHT_RANGE_SQ
+                })
+                .filter(|(_, egp, _)| has_line_of_sight(&map.0, *member_gp, *egp))
+                .min_by_key(|(_, _, epos)| {
+                    let dx = member_pos.x - epos.x;
+                    let dz = member_pos.z - epos.z;
+                    ((dx * dx + dz * dz) * 1000.0) as i32
+                })
+                .copied()
+        };
+
+        let Some((_, target_gp, target_pos)) = nearest else { continue };
+        let dist = dist_xz(member_pos, target_pos);
 
         let is_ranged = attack_mode == Some(&AttackMode::Ranged);
         if is_ranged {
             if dist < RANGED_KEEP_DIST {
                 // Too close — back away.
                 move_dir.0 = Vec2::new(
-                    member_pos.x - enemy_pos.x,
-                    member_pos.z - enemy_pos.z,
+                    member_pos.x - target_pos.x,
+                    member_pos.z - target_pos.z,
                 ).normalize_or_zero();
             } else if dist > RANGED_ATTACK_RANGE {
                 // Too far — close in.
                 move_dir.0 = Vec2::new(
-                    enemy_pos.x - member_pos.x,
-                    enemy_pos.z - member_pos.z,
+                    target_pos.x - member_pos.x,
+                    target_pos.z - member_pos.z,
                 ).normalize_or_zero();
             } else {
                 // Sweet spot — hold position.
                 move_dir.0 = Vec2::ZERO;
             }
         } else {
-            // Melee — A* navigate toward enemy.
+            // Melee — A* navigate toward target.
             path.recalc_timer -= dt;
             if path.recalc_timer <= 0.0 {
-                path.steps = map.0.astar((member_gp.x, member_gp.y), (enemy_gp.x, enemy_gp.y)).into();
+                path.steps = map.0.astar((member_gp.x, member_gp.y), (target_gp.x, target_gp.y)).into();
                 path.recalc_timer = 0.4 + (entity.index() % 5) as f32 * 0.08;
             }
             while path.steps.front() == Some(&(member_gp.x, member_gp.y)) {
@@ -471,8 +500,8 @@ fn swarm_ai_system(
                 ).normalize_or_zero();
             } else {
                 move_dir.0 = Vec2::new(
-                    enemy_pos.x - member_pos.x,
-                    enemy_pos.z - member_pos.z,
+                    target_pos.x - member_pos.x,
+                    target_pos.z - member_pos.z,
                 ).normalize_or_zero();
             }
         }
@@ -481,6 +510,7 @@ fn swarm_ai_system(
 
 /// Automatically fire basic attacks for all non-active swarm members.
 /// Requires line of sight to the target.
+/// Controlled members (Prophet's PsychicControl) attack Friendly entities instead.
 fn swarm_auto_attack_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -490,12 +520,18 @@ fn swarm_auto_attack_system(
     member_transforms: Query<&Transform, With<SwarmMember>>,
     mut member_attacks: Query<(&mut Attack, Option<&AttackMode>, &GridPos), With<SwarmMember>>,
     enemies: Query<(Entity, &Transform, &GridPos), (With<Enemy>, Without<Dying>, Without<Corpse>)>,
+    friendly_targets: Query<(Entity, &Transform, &GridPos), (With<Friendly>, Without<Dying>)>,
+    controlled_q: Query<(), With<Controlled>>,
     mut damage_events: EventWriter<DamageEvent>,
     tier: Res<BiomassTier>,
     map: Res<CurrentMap>,
 ) {
-    // Collect enemy positions once.
+    // Collect target positions once.
     let enemy_list: Vec<(Entity, Vec3, GridPos)> = enemies
+        .iter()
+        .map(|(e, tf, gp)| (e, tf.translation, *gp))
+        .collect();
+    let friendly_list: Vec<(Entity, Vec3, GridPos)> = friendly_targets
         .iter()
         .map(|(e, tf, gp)| (e, tf.translation, *gp))
         .collect();
@@ -510,16 +546,31 @@ fn swarm_auto_attack_system(
             continue;
         }
         let member_pos = member_tf.translation;
+        let is_controlled = controlled_q.get(entity).is_ok();
 
-        // Find nearest enemy within range that has a clear line of sight.
-        let nearest = enemy_list
-            .iter()
-            .filter(|(_, epos, egp)| {
-                let d = dist_xz(member_pos, *epos);
-                d <= SWARM_SIGHT_RANGE && has_line_of_sight(&map.0, *grid, *egp)
-            })
-            .min_by_key(|(_, epos, _)| (dist_xz(member_pos, *epos) * 1000.0) as i32);
-        let Some(&(target_entity, target_pos, _)) = nearest else { continue };
+        // Controlled members attack allies; normal members attack enemies.
+        let nearest: Option<(Entity, Vec3, GridPos)> = if is_controlled {
+            friendly_list
+                .iter()
+                .filter(|(fe, fpos, fgp)| {
+                    *fe != entity
+                        && dist_xz(member_pos, *fpos) <= SWARM_SIGHT_RANGE
+                        && has_line_of_sight(&map.0, *grid, *fgp)
+                })
+                .min_by_key(|(_, fpos, _)| (dist_xz(member_pos, *fpos) * 1000.0) as i32)
+                .copied()
+        } else {
+            enemy_list
+                .iter()
+                .filter(|(_, epos, egp)| {
+                    dist_xz(member_pos, *epos) <= SWARM_SIGHT_RANGE
+                        && has_line_of_sight(&map.0, *grid, *egp)
+                })
+                .min_by_key(|(_, epos, _)| (dist_xz(member_pos, *epos) * 1000.0) as i32)
+                .copied()
+        };
+
+        let Some((target_entity, target_pos, _)) = nearest else { continue };
         let dist = dist_xz(member_pos, target_pos);
         let base_damage = atk.damage * tier.damage_multiplier();
 
