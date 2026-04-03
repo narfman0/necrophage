@@ -26,6 +26,14 @@ pub struct ProphetBoss;
 #[derive(Component)]
 pub struct GeneralBoss;
 
+/// Tank sub-boss that must be destroyed before General Marak becomes vulnerable.
+#[derive(Component)]
+pub struct TankSubBoss;
+
+/// Stores the general boss entity so the tank can unlock it on death.
+#[derive(Component)]
+pub struct GeneralRef(pub Entity);
+
 // ── Narrative phase components ────────────────────────────────────────────────
 
 /// Tracks the 3-narrative-phase structure for faction bosses.
@@ -96,6 +104,8 @@ impl Plugin for BossPlugin {
                     harlan::shield_expiry_system,
                     prophet::prophet_ai_system.after(boss_narrative_phase_system),
                     general::general_ai_system,
+                    general::tank_ai_system,
+                    general::tank_death_system,
                     resolve_telegraphed_explosions,
                     resolve_controlled,
                     boss_movement_system,

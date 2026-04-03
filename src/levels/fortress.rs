@@ -70,6 +70,9 @@ impl LevelGenerator for FortressGenerator {
         let general_y = cmd_y + 4;
         info.general_position = Some((general_x, general_y));
 
+        // Tank sub-boss spawns between the entrance and the general.
+        info.tank_position = Some((general_x, general_y + 6));
+
         // Elite soldiers.
         let elite_count = rng.gen_range(4usize..8);
         for i in 0..elite_count as i32 {

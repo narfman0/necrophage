@@ -9,14 +9,15 @@
 /// Defeat → sets FactionProgress::general_defeated = true.
 use bevy::prelude::*;
 
-use crate::combat::{spawn_enemy, BossAI, Corpse, DamageEvent, Dying, Elite, Health, Invincible, MobBoss};
+use crate::combat::{spawn_enemy, BossAI, Corpse, DamageEvent, Dying, Elite, EntityDied, Health, Invincible, MobBoss};
 use crate::world::Suspended;
+use crate::dialogue::DialogueQueue;
 use crate::faction::BossRelation;
 use crate::movement::GridPos;
 use crate::player::ActiveEntity;
 use crate::world::{Friendly, LevelEntity};
 
-use super::{spawn_telegraph, GeneralBoss};
+use super::{spawn_telegraph, GeneralBoss, GeneralRef, TankSubBoss};
 
 pub const GENERAL_HP: f32 = 1000.0;
 pub const GENERAL_DMG: f32 = 35.0;
@@ -242,3 +243,89 @@ fn spawn_reinforcements(
 }
 
 pub const GENERAL_STATS: (f32, f32) = (GENERAL_HP, GENERAL_DMG);
+
+// ── Tank sub-boss ─────────────────────────────────────────────────────────────
+
+pub const TANK_HP: f32 = 600.0;
+pub const TANK_DMG: f32 = 30.0;
+const TANK_CANNON_DELAY: f32 = 4.0;
+const TANK_SPREAD_DELAY: f32 = 3.0;
+const TANK_PHASE_0_TIMER: f32 = 6.0;
+const TANK_PHASE_1_TIMER: f32 = 8.0;
+const TANK_CANNON_RADIUS: f32 = 3.0;
+
+/// Tank sub-boss AI: alternates between a single heavy cannon shot and a spread burst.
+/// Phase 0: heavy cannon — single telegraph marker at player position.
+/// Phase 1: spread burst — two flanking markers offset left/right.
+pub fn tank_ai_system(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    active: Res<ActiveEntity>,
+    active_tf: Query<&Transform, Without<MobBoss>>,
+    mut tanks: Query<
+        (&Transform, &GridPos, &mut BossAI, &Health, &BossRelation),
+        (With<TankSubBoss>, With<MobBoss>, Without<Suspended>, Without<Dying>, Without<Corpse>),
+    >,
+    time: Res<Time>,
+) {
+    let Ok(target_tf) = active_tf.get(active.0) else { return };
+    for (_boss_tf, _boss_gp, mut ai, hp, rel) in &mut tanks {
+        if *rel != BossRelation::Hostile {
+            continue;
+        }
+        ai.phase_timer -= time.delta_secs();
+        if ai.phase_timer > 0.0 {
+            continue;
+        }
+        let enraged = hp.current < hp.max * 0.5;
+        let speed = if enraged { 0.65 } else { 1.0 };
+        let player_pos = target_tf.translation;
+
+        match ai.phase % 2 {
+            0 => {
+                // Heavy cannon: single large telegraph at player.
+                spawn_telegraph(
+                    &mut commands, &mut meshes, &mut materials,
+                    player_pos,
+                    TANK_CANNON_RADIUS,
+                    if enraged { TANK_CANNON_DELAY * 0.7 } else { TANK_CANNON_DELAY },
+                    TANK_DMG * 2.0,
+                );
+                ai.phase_timer = TANK_PHASE_0_TIMER * speed;
+            }
+            1 => {
+                // Spread burst: two flanking telegraphs offset left/right.
+                for sign in [-1.0f32, 1.0] {
+                    let offset = Vec3::new(sign * 3.0, 0.0, 0.0);
+                    spawn_telegraph(
+                        &mut commands, &mut meshes, &mut materials,
+                        player_pos + offset,
+                        TANK_CANNON_RADIUS * 0.7,
+                        if enraged { TANK_SPREAD_DELAY * 0.7 } else { TANK_SPREAD_DELAY },
+                        TANK_DMG * 1.2,
+                    );
+                }
+                ai.phase_timer = TANK_PHASE_1_TIMER * speed;
+            }
+            _ => unreachable!(),
+        }
+        ai.phase = ai.phase.wrapping_add(1);
+    }
+}
+
+/// When the tank dies, remove `Invincible` from the General and play entrance dialogue.
+pub fn tank_death_system(
+    mut died: EventReader<EntityDied>,
+    tank_query: Query<&GeneralRef, With<TankSubBoss>>,
+    mut commands: Commands,
+    mut dialogue: ResMut<DialogueQueue>,
+) {
+    for ev in died.read() {
+        let Ok(gref) = tank_query.get(ev.entity) else { continue };
+        commands.entity(gref.0).remove::<Invincible>();
+        dialogue.push("General Marak", "The General steps from the wreckage.");
+    }
+}
+
+pub const TANK_STATS: (f32, f32) = (TANK_HP, TANK_DMG);

@@ -53,6 +53,8 @@ pub struct SpawnInfo {
     pub job_targets: Vec<(i32, i32, FactionId)>,
     /// General Marak's spawn position in the Fortress zone.
     pub general_position: Option<(i32, i32)>,
+    /// Tank sub-boss spawn position in the Fortress zone (spawns ahead of the General).
+    pub tank_position: Option<(i32, i32)>,
 }
 
 impl SpawnInfo {
@@ -70,6 +72,7 @@ impl SpawnInfo {
             faction_bosses: Vec::new(),
             job_targets: Vec::new(),
             general_position: None,
+            tank_position: None,
         }
     }
 }

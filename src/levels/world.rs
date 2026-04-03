@@ -183,6 +183,9 @@ fn apply_fortress_info(master: &mut SpawnInfo, fort: &SpawnInfo, ox: i32, oy: i3
     if let Some((x, y)) = fort.general_position {
         master.general_position = Some((x + ox, y + oy));
     }
+    if let Some((x, y)) = fort.tank_position {
+        master.tank_position = Some((x + ox, y + oy));
+    }
 }
 
 #[cfg(test)]

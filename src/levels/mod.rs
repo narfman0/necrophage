@@ -15,10 +15,10 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use bevy::ecs::system::SystemParam;
 
 use crate::biomass::{Biomass, BiomassTier};
-use crate::boss::{BossNarrativePhase, GeneralBoss, HarlanBoss, ProphetBoss, VarroBoss};
+use crate::boss::{BossNarrativePhase, GeneralBoss, GeneralRef, HarlanBoss, ProphetBoss, TankSubBoss, VarroBoss};
 use crate::combat::{
     spawn_enemy, AttackMode, BossAI, Civilian, Elite, Enemy, Health,
-    MeleeAttackShape, MobBoss, PatrolTimer,
+    Invincible, MeleeAttackShape, MobBoss, PatrolTimer,
 };
 use crate::dialogue::DialogueQueue;
 use crate::ending::{EndingPhase, FadeTimer};
@@ -205,10 +205,11 @@ fn generate_world(
             spawn_faction_boss(&mut commands, &mut meshes, &mut materials, wx, wy, fid);
         }
     }
-    // Spawn General Marak.
+    // Spawn General Marak (and tank sub-boss if present).
     if let Some((gx, gy)) = info.general_position {
         if let Some((wx, wy)) = find_walkable_near(&map, gx, gy) {
-            spawn_general_boss(&mut commands, &mut meshes, &mut materials, wx, wy);
+            let tank_pos = info.tank_position.and_then(|(tx, ty)| find_walkable_near(&map, tx, ty));
+            spawn_fortress_bosses(&mut commands, &mut meshes, &mut materials, wx, wy, tank_pos);
         }
     }
     // Spawn job targets (FactionJobTarget component on a jab-melee enemy).
@@ -405,7 +406,8 @@ fn handle_new_game(
     }
     if let Some((gx, gy)) = info.general_position {
         if let Some((wx, wy)) = find_walkable_near(&map, gx, gy) {
-            spawn_general_boss(&mut commands, &mut meshes, &mut materials, wx, wy);
+            let tank_pos = info.tank_position.and_then(|(tx, ty)| find_walkable_near(&map, tx, ty));
+            spawn_fortress_bosses(&mut commands, &mut meshes, &mut materials, wx, wy, tank_pos);
         }
     }
     for &(jx, jy, fid) in &info.job_targets {
@@ -553,24 +555,45 @@ fn spawn_faction_boss(
     }
 }
 
-fn spawn_general_boss(
+/// Spawns the General boss and, if `tank_pos` is Some, a TankSubBoss ahead of it.
+/// The General starts Invincible when the tank is present; tank death removes that Invincible.
+fn spawn_fortress_bosses(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-    wx: i32,
-    wy: i32,
+    general_x: i32,
+    general_y: i32,
+    tank_pos: Option<(i32, i32)>,
 ) {
-    let e = spawn_enemy(
+    let general_e = spawn_enemy(
         commands, meshes, materials,
-        GridPos { x: wx, y: wy },
+        GridPos { x: general_x, y: general_y },
         1000.0, 35.0, Color::srgb(0.2, 0.45, 0.2), // military green
     );
-    commands.entity(e)
-        .insert(MobBoss)
+    let mut ec = commands.entity(general_e);
+    ec.insert(MobBoss)
         .insert(BossAI::default())
         .insert(BossRelation::Hostile)
         .insert(GeneralBoss)
         .insert(LevelEntity);
+    if tank_pos.is_some() {
+        ec.insert(Invincible);
+    }
+
+    if let Some((tx, ty)) = tank_pos {
+        let tank_e = spawn_enemy(
+            commands, meshes, materials,
+            GridPos { x: tx, y: ty },
+            600.0, 30.0, Color::srgb(0.15, 0.35, 0.15), // darker military green
+        );
+        commands.entity(tank_e)
+            .insert(MobBoss)
+            .insert(BossAI::default())
+            .insert(BossRelation::Hostile)
+            .insert(TankSubBoss)
+            .insert(GeneralRef(general_e))
+            .insert(LevelEntity);
+    }
 }
 
 // ── Zone suspension ───────────────────────────────────────────────────────────
