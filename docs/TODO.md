@@ -1,0 +1,5 @@
+* Refactor combat, biomass, and health accrual. When an enemy gets to very low health, make a short window where the player can harvest the life essence by pressing the action key, f. Make the creature pulse green to get back health, red to get biomass, or nothing.
+* Make a new stat called psychic power. Every biomass accrued adds to psychic power, which contributes 
+* each boss should have three phases. between each phase the player should have an opportunity to fight biomass and health feeding enemies - individual adds, leftover body parts of the boss, or similar. each boss fight should be an enclosed area - close the a door to start the battle. do not allow for saves during boss fights.
+* I want the final general boss to have a sub-boss that is a large square tank. the final boss should follow, as a large mecha-human
+* For pause menu, instead of all save/load slots being visible, have one load button, one save button, and show the slots only when clicking them.
