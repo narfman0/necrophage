@@ -797,4 +797,33 @@ mod tests {
         let b = Vec3::new(3.0, 99.0, 4.0);
         assert!((dist_xz(a, b) - 5.0).abs() < 0.001);
     }
+
+    #[test]
+    fn swarm_unlocks_gating() {
+        let unlocks = SwarmUnlocks::default();
+        assert!(!unlocks.is_unlocked(&CreatureKind::Scuttler));
+        assert!(!unlocks.is_unlocked(&CreatureKind::Grasper));
+        assert!(!unlocks.is_unlocked(&CreatureKind::Colossoid));
+    }
+
+    #[test]
+    fn swarm_unlocks_deduplicates() {
+        let mut unlocks = SwarmUnlocks::default();
+        unlocks.unlock(CreatureKind::Scuttler);
+        unlocks.unlock(CreatureKind::Scuttler);
+        unlocks.unlock(CreatureKind::Scuttler);
+        assert_eq!(unlocks.unlocked.len(), 1);
+        assert!(unlocks.is_unlocked(&CreatureKind::Scuttler));
+    }
+
+    #[test]
+    fn swarm_unlocks_multiple_kinds() {
+        let mut unlocks = SwarmUnlocks::default();
+        unlocks.unlock(CreatureKind::Scuttler);
+        unlocks.unlock(CreatureKind::Ravager);
+        assert!(unlocks.is_unlocked(&CreatureKind::Scuttler));
+        assert!(unlocks.is_unlocked(&CreatureKind::Ravager));
+        assert!(!unlocks.is_unlocked(&CreatureKind::Colossoid));
+        assert_eq!(unlocks.unlocked.len(), 2);
+    }
 }

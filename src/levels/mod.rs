@@ -49,6 +49,7 @@ struct NewGameState<'w> {
     swarm: ResMut<'w, Swarm>,
     faction: ResMut<'w, FactionProgress>,
     sw_unlocks: ResMut<'w, SwarmUnlocks>,
+    army_spawned: ResMut<'w, ArmyInvasionSpawned>,
 }
 use generator::LevelGenerator;
 use world::WorldGenerator;
@@ -99,9 +100,14 @@ pub struct LevelPlugin;
 impl Plugin for LevelPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(LevelSeed::default())
+            .init_resource::<ArmyInvasionSpawned>()
             .add_systems(Startup, seed_rng)
             .add_systems(PostStartup, generate_world)
             .add_systems(Update, handle_new_game)
+            .add_systems(
+                Update,
+                spawn_army_invasion_wave.run_if(in_state(crate::world::GameState::Playing)),
+            )
             .add_systems(
                 PostUpdate,
                 zone_suspend_system.run_if(in_state(crate::world::GameState::Playing)),
@@ -331,6 +337,7 @@ fn handle_new_game(
     state.fade_timer.0 = 0.0;
     *state.faction = FactionProgress::default();
     state.sw_unlocks.unlocked.clear();
+    state.army_spawned.0 = false;
 
     // Reset swarm — only the original player body remains.
     state.swarm.members.clear();
@@ -469,6 +476,56 @@ fn handle_new_game(
     commands.insert_resource(CurrentMap(map));
     println!("[LevelSeed] New game started with seed: {}", seed.0);
     dialogue.push("System", "The cell door is open. Escape.");
+}
+
+// ── Army invasion ─────────────────────────────────────────────────────────────
+
+/// Guards against spawning the army wave more than once per game.
+#[derive(Resource, Default)]
+pub struct ArmyInvasionSpawned(pub bool);
+
+/// When the quest reaches ArmyInvasion, spawn a wave of military soldiers in the hub zone.
+/// Fires exactly once; subsequent frames are short-circuited by the guard flag.
+fn spawn_army_invasion_wave(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    quest: Res<QuestState>,
+    map: Res<CurrentMap>,
+    mut spawned: ResMut<ArmyInvasionSpawned>,
+    mut rng: ResMut<GameRng>,
+) {
+    if spawned.0 {
+        return;
+    }
+    if *quest != QuestState::ArmyInvasion {
+        return;
+    }
+    spawned.0 = true;
+
+    // Spawn 20-30 military soldiers scattered through the hub zone (x=65..124, y=0..79).
+    let hub_x0 = world::HUB_OFFSET_X;
+    let hub_x1 = hub_x0 + hub::HUB_W;
+    let hub_h = hub::HUB_H;
+    let count = rng.0.gen_range(20usize..31);
+    let mut placed = 0;
+    let mut attempts = 0;
+    while placed < count && attempts < 300 {
+        attempts += 1;
+        let x = rng.0.gen_range(hub_x0..hub_x1);
+        let y = rng.0.gen_range(0..hub_h);
+        if !map.0.is_walkable(x, y) {
+            continue;
+        }
+        let e = spawn_enemy(
+            &mut commands, &mut meshes, &mut materials,
+            GridPos { x, y },
+            40.0, 10.0,
+            Color::srgb(0.2, 0.45, 0.2), // military green
+        );
+        commands.entity(e).insert(LevelEntity);
+        placed += 1;
+    }
 }
 
 // ── Boss spawn helpers ────────────────────────────────────────────────────────

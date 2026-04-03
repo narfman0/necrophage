@@ -307,8 +307,9 @@ pub fn boss_surrender_check_system(
         if *rel == BossRelation::Surrendered {
             continue;
         }
-        if *rel == BossRelation::OfferingDeal || *rel == BossRelation::DealAccepted {
-            // Only surrender during actual combat (Hostile path or DealAccepted-then-betrayed).
+        // Skip surrender check while boss is mid-negotiation (not yet in combat).
+        if *rel == BossRelation::OfferingDeal {
+            continue;
         }
         if hp.current <= hp.max * SURRENDER_HP_FRACTION && hp.current > 0.0 {
             *rel = BossRelation::Surrendered;
