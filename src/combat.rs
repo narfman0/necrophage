@@ -206,8 +206,10 @@ const DISSOLVE_DURATION: f32 = 2.0;
 
 const LOST_TIMEOUT: f32 = 2.0;
 
-/// HP fraction below which a non-boss enemy becomes harvestable (12 %).
-const HARVEST_THRESHOLD: f32 = 0.12;
+/// HP fraction below which a non-boss enemy becomes harvestable (10 %).
+const HARVEST_THRESHOLD: f32 = 0.10;
+/// HP fraction at which fatal damage is floored once below HARVEST_THRESHOLD.
+const HARVEST_FLOOR: f32 = 0.05;
 /// Duration of the harvest window before it expires.
 const HARVEST_WINDOW_DURATION: f32 = 2.5;
 /// Chebyshev tile range within which the player can execute a harvest.
@@ -875,13 +877,25 @@ pub fn apply_damage(
     invincible: Query<(), With<Invincible>>,
     positions: Query<&GridPos>,
     mut alert_events: EventWriter<AlertEvent>,
+    harvestable: Query<(), (With<Enemy>, Without<MobBoss>, Without<HarvestExhausted>)>,
 ) {
     for ev in events.read() {
         if invincible.get(ev.target).is_ok() {
             continue;
         }
         if let Ok(mut hp) = health_query.get_mut(ev.target) {
-            hp.current -= ev.amount;
+            let new_hp = hp.current - ev.amount;
+            // Once below the harvest threshold, cap fatal damage so the harvest
+            // window has a chance to open before the enemy dies.
+            if new_hp <= 0.0
+                && hp.max > 0.0
+                && hp.current / hp.max <= HARVEST_THRESHOLD
+                && harvestable.get(ev.target).is_ok()
+            {
+                hp.current = (hp.max * HARVEST_FLOOR).max(0.01);
+            } else {
+                hp.current = new_hp;
+            }
         }
         // Insert knockback component (GridPos + visual animation handled by knockback_system).
         if let Some(src) = ev.attacker_pos {
@@ -1563,8 +1577,13 @@ mod tests {
     }
 
     #[test]
-    fn harvest_threshold_is_twelve_percent() {
-        assert!((HARVEST_THRESHOLD - 0.12).abs() < f32::EPSILON);
+    fn harvest_threshold_is_ten_percent() {
+        assert!((HARVEST_THRESHOLD - 0.10).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn harvest_floor_is_five_percent() {
+        assert!((HARVEST_FLOOR - 0.05).abs() < f32::EPSILON);
     }
 
     #[test]
