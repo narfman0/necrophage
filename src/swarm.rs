@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::biomass::{Biomass, BiomassTier};
 use crate::camera::CameraTarget;
@@ -6,13 +7,14 @@ use crate::combat::{
     Attack, AttackMode, Civilian, Corpse, DamageEvent, Dying, Enemy, EntityDied, EntityPath, Health,
     HpBar, HpBarRoot, has_line_of_sight, spawn_projectile,
 };
+use crate::dialogue::DialogueQueue;
 use crate::movement::{AttackRecovery, Body, GridPos, MoveDir};
 use crate::player::{ActiveEntity, Player};
 use crate::world::{CurrentMap, Friendly, GameState};
 
 // ── Components ────────────────────────────────────────────────────────────────
 
-#[derive(Component, Reflect, Clone, PartialEq, Debug)]
+#[derive(Component, Reflect, Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub enum CreatureKind {
     Scuttler,
     Grasper,
@@ -121,6 +123,25 @@ pub struct Swarm {
     pub active_index: usize,
 }
 
+/// Which creature types the player has unlocked for spawning.
+/// Starts empty; creatures are unlocked through progression milestones.
+#[derive(Resource, Default, Reflect)]
+pub struct SwarmUnlocks {
+    pub unlocked: Vec<CreatureKind>,
+}
+
+impl SwarmUnlocks {
+    pub fn is_unlocked(&self, kind: &CreatureKind) -> bool {
+        self.unlocked.contains(kind)
+    }
+
+    pub fn unlock(&mut self, kind: CreatureKind) {
+        if !self.unlocked.contains(&kind) {
+            self.unlocked.push(kind);
+        }
+    }
+}
+
 // ── HUD marker ────────────────────────────────────────────────────────────────
 
 #[derive(Component)]
@@ -133,10 +154,12 @@ pub struct SwarmPlugin;
 impl Plugin for SwarmPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Swarm::default())
+            .init_resource::<SwarmUnlocks>()
             .register_type::<CreatureKind>()
             .register_type::<SwarmMember>()
             .register_type::<StrongAttack>()
             .register_type::<Swarm>()
+            .register_type::<SwarmUnlocks>()
             .add_systems(PostStartup, (init_swarm, spawn_swarm_hud))
             .add_systems(
                 Update,
@@ -216,6 +239,8 @@ fn spawn_creature_system(
     active_tf: Query<(&Transform, &GridPos)>,
     mut biomass: ResMut<Biomass>,
     mut swarm: ResMut<Swarm>,
+    unlocks: Res<SwarmUnlocks>,
+    mut dialogue: ResMut<DialogueQueue>,
 ) {
     let kind = [
         (KeyCode::Digit1, CreatureKind::Scuttler),
@@ -231,6 +256,12 @@ fn spawn_creature_system(
     .map(|(_, k)| k);
 
     let Some(kind) = kind else { return };
+
+    if !unlocks.is_unlocked(&kind) {
+        dialogue.push("System", &format!("{} not yet unlocked.", kind.display_name()));
+        return;
+    }
+
     let cost = kind.biomass_cost();
     if biomass.0 < cost {
         return;

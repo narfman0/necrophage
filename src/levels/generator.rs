@@ -1,5 +1,6 @@
 use rand::Rng;
 
+use crate::faction::FactionId;
 use crate::world::map::TileMap;
 
 pub trait LevelGenerator {
@@ -39,12 +40,19 @@ pub struct SpawnInfo {
     pub guard_positions: Vec<(i32, i32)>,
     pub enemy_positions: Vec<(i32, i32)>,
     pub elite_positions: Vec<(i32, i32)>,
+    /// Legacy single boss position (used for hub district enemies; prefer faction_bosses).
     pub boss_position: Option<(i32, i32)>,
     pub civilian_positions: Vec<(i32, i32)>,
     /// Positions for point light streetlamps in the district level.
     pub streetlight_positions: Vec<(i32, i32)>,
     /// (door_x, door_y, building_id, kind) for each enterable building.
     pub entrance_positions: Vec<(i32, i32, u64, BuildingKind)>,
+    /// Faction-specific boss spawn positions: (x, y, faction).
+    pub faction_bosses: Vec<(i32, i32, FactionId)>,
+    /// Job-target spawn positions: (x, y, faction).
+    pub job_targets: Vec<(i32, i32, FactionId)>,
+    /// General Marak's spawn position in the Fortress zone.
+    pub general_position: Option<(i32, i32)>,
 }
 
 impl SpawnInfo {
@@ -59,6 +67,9 @@ impl SpawnInfo {
             civilian_positions: Vec::new(),
             streetlight_positions: Vec::new(),
             entrance_positions: Vec::new(),
+            faction_bosses: Vec::new(),
+            job_targets: Vec::new(),
+            general_position: None,
         }
     }
 }

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::quest::BossDefeated;
+use crate::faction::FactionProgress;
 use crate::world::GameState;
 
 #[derive(Event)]
@@ -82,7 +82,7 @@ fn spawn_ending_ui(mut commands: Commands) {
 }
 
 fn check_ending_condition(
-    boss_defeated: Res<BossDefeated>,
+    faction: Res<FactionProgress>,
     mut phase: ResMut<EndingPhase>,
     mut events: EventWriter<EndingTriggered>,
     mut next_state: ResMut<NextState<GameState>>,
@@ -90,7 +90,7 @@ fn check_ending_condition(
     if *phase != EndingPhase::None {
         return;
     }
-    if boss_defeated.0 {
+    if faction.general_defeated {
         *phase = EndingPhase::FadingIn;
         events.send(EndingTriggered);
         // Freeze all gameplay systems while the ending plays.

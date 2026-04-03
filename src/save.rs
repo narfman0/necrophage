@@ -5,10 +5,12 @@ use std::path::PathBuf;
 
 use crate::biomass::{Biomass, BiomassTier};
 use crate::combat::Health;
+use crate::faction::FactionProgress;
 use crate::levels::LevelSeed;
 use crate::movement::GridPos;
 use crate::player::{ActiveEntity, Player};
 use crate::quest::{BossDefeated, EscapeFired, QuestState};
+use crate::swarm::{CreatureKind, SwarmUnlocks};
 
 pub const SAVE_SLOTS: usize = 4;
 
@@ -24,6 +26,10 @@ pub struct SaveData {
     pub player_hp: f32,
     pub player_hp_max: f32,
     pub level_seed: u64,
+    #[serde(default)]
+    pub faction_progress: FactionProgress,
+    #[serde(default)]
+    pub swarm_unlocks: Vec<CreatureKind>,
 }
 
 fn save_path(slot: usize) -> PathBuf {
@@ -75,6 +81,8 @@ fn handle_save_game(
     boss_defeated: Res<BossDefeated>,
     escape_fired: Res<EscapeFired>,
     seed: Res<LevelSeed>,
+    faction: Res<FactionProgress>,
+    sw_unlocks: Res<SwarmUnlocks>,
     active: Res<ActiveEntity>,
     player_query: Query<(&GridPos, &Health), With<Player>>,
 ) {
@@ -93,6 +101,13 @@ fn handle_save_game(
             player_hp: hp.current,
             player_hp_max: hp.max,
             level_seed: seed.0,
+            faction_progress: FactionProgress {
+                syndicate: faction.syndicate,
+                precinct: faction.precinct,
+                covenant: faction.covenant,
+                general_defeated: faction.general_defeated,
+            },
+            swarm_unlocks: sw_unlocks.unlocked.clone(),
         };
         match write_save(ev.0, &data) {
             Ok(()) => println!("[Save] Saved to slot {}", ev.0),
@@ -108,6 +123,8 @@ fn handle_load_game(
     mut quest: ResMut<QuestState>,
     mut boss_defeated: ResMut<BossDefeated>,
     mut escape_fired: ResMut<EscapeFired>,
+    mut faction: ResMut<FactionProgress>,
+    mut sw_unlocks: ResMut<SwarmUnlocks>,
     active: Res<ActiveEntity>,
     mut player_query: Query<(&mut GridPos, &mut Health, &mut Transform), With<Player>>,
 ) {
@@ -118,9 +135,18 @@ fn handle_load_game(
         };
         biomass.0 = data.biomass;
         *tier = data.biomass_tier;
-        *quest = data.quest_state;
+        // Translate legacy Complete state → FactionHunt for old saves.
+        *quest = match data.quest_state {
+            QuestState::Complete => QuestState::FactionHunt,
+            other => other,
+        };
         boss_defeated.0 = data.boss_defeated;
         escape_fired.0 = data.escape_fired;
+        faction.syndicate = data.faction_progress.syndicate;
+        faction.precinct = data.faction_progress.precinct;
+        faction.covenant = data.faction_progress.covenant;
+        faction.general_defeated = data.faction_progress.general_defeated;
+        sw_unlocks.unlocked = data.swarm_unlocks;
 
         if let Ok((mut pos, mut hp, mut tf)) = player_query.get_mut(active.0) {
             pos.x = data.player_x;

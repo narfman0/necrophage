@@ -1,8 +1,10 @@
 pub mod biomass;
+pub mod boss;
 pub mod camera;
 pub mod combat;
 pub mod dialogue;
 pub mod ending;
+pub mod faction;
 pub mod levels;
 pub mod menu;
 pub mod minimap;
@@ -17,10 +19,12 @@ pub mod world;
 
 use bevy::prelude::*;
 use biomass::BiomassPlugin;
+use boss::BossPlugin;
 use camera::CameraPlugin;
 use combat::CombatPlugin;
 use dialogue::DialoguePlugin;
 use ending::EndingPlugin;
+use faction::FactionPlugin;
 use levels::LevelPlugin;
 use menu::{MainMenuPlugin, PauseMenuPlugin};
 use minimap::MinimapPlugin;
@@ -52,6 +56,7 @@ impl Plugin for NecrophagePlugin {
             MinimapPlugin,
             SwarmPlugin,
         ));
+        app.add_plugins((FactionPlugin, BossPlugin));
         app.add_plugins((SavePlugin, MainMenuPlugin, PauseMenuPlugin));
     }
 }
@@ -349,17 +354,30 @@ pub mod hud {
 
     pub fn update_quest_hud(
         quest: Res<QuestState>,
+        faction: Res<crate::faction::FactionProgress>,
         mut query: Query<&mut Text, With<QuestDisplay>>,
     ) {
-        if !quest.is_changed() {
+        if !quest.is_changed() && !faction.is_changed() {
             return;
         }
-        let objective = match *quest {
-            QuestState::Escape => "Escape the jail",
-            QuestState::HitJob => "Kill the lieutenant",
-            QuestState::Confrontation => "Confront the Liberator",
-            QuestState::Betrayal => "Betrayal",
-            QuestState::Complete => "Complete",
+        let objective: std::borrow::Cow<str> = match *quest {
+            QuestState::Escape => "Escape the jail".into(),
+            QuestState::HitJob => "Kill the lieutenant".into(),
+            QuestState::Confrontation => "Confront the Liberator".into(),
+            QuestState::Betrayal => "Betrayal".into(),
+            QuestState::Complete | QuestState::FactionHunt => {
+                use crate::faction::FactionState;
+                let s = format!(
+                    "Hunt factions [{}/{}/{}]",
+                    if faction.syndicate == FactionState::Resolved { "X" } else { " " },
+                    if faction.precinct == FactionState::Resolved { "X" } else { " " },
+                    if faction.covenant == FactionState::Resolved { "X" } else { " " },
+                );
+                s.into()
+            }
+            QuestState::ArmyInvasion => "Find the General's Fortress".into(),
+            QuestState::FinalBattle => "Defeat General Marak".into(),
+            QuestState::Victory => "Victory — You have won.".into(),
         };
         for mut text in &mut query {
             text.0 = format!("Objective: {}", objective);

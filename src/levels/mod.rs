@@ -1,7 +1,12 @@
 pub mod building;
+pub mod covenant;
 pub mod district;
+pub mod fortress;
 pub mod generator;
+pub mod hub;
 pub mod jail;
+pub mod precinct;
+pub mod syndicate;
 pub mod world;
 
 use bevy::prelude::*;
@@ -10,16 +15,19 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use bevy::ecs::system::SystemParam;
 
 use crate::biomass::{Biomass, BiomassTier};
+use crate::boss::{GeneralBoss, HarlanBoss, ProphetBoss, VarroBoss};
 use crate::combat::{
-    spawn_enemy, AttackMode, BossAI, Civilian, Elite, Enemy, Health, MeleeAttackShape, MobBoss, PatrolTimer,
+    spawn_enemy, AttackMode, BossAI, Civilian, Elite, Enemy, Health,
+    MeleeAttackShape, MobBoss, PatrolTimer,
 };
 use crate::dialogue::DialogueQueue;
 use crate::ending::{EndingPhase, FadeTimer};
+use crate::faction::{BossRelation, FactionId, FactionJobTarget, FactionProgress};
 use crate::movement::{Body, GridPos};
 use crate::npc::{Liberator, LiberatorState, ScriptTimer};
 use crate::player::{ActiveEntity, Player};
-use crate::quest::{BossDefeated, EscapeFired, QuestState};
-use crate::swarm::{Swarm, SwarmMember};
+use crate::quest::{BossDefeated, EscapeFired, FortressEntryFired, QuestState};
+use crate::swarm::{Swarm, SwarmMember, SwarmUnlocks};
 use crate::world::{
     CurrentMap, GameRng, LevelEntity, NewGame, PlayerDied, PopulationDensity, Suspended,
 };
@@ -34,10 +42,13 @@ struct NewGameState<'w> {
     quest: ResMut<'w, QuestState>,
     boss_defeated: ResMut<'w, BossDefeated>,
     escape_fired: ResMut<'w, EscapeFired>,
+    fortress_fired: ResMut<'w, FortressEntryFired>,
     player_died: ResMut<'w, PlayerDied>,
     ending_phase: ResMut<'w, EndingPhase>,
     fade_timer: ResMut<'w, FadeTimer>,
     swarm: ResMut<'w, Swarm>,
+    faction: ResMut<'w, FactionProgress>,
+    sw_unlocks: ResMut<'w, SwarmUnlocks>,
 }
 use generator::LevelGenerator;
 use world::WorldGenerator;
@@ -52,8 +63,6 @@ impl Default for LevelSeed {
         Self(12345)
     }
 }
-
-// ── Zone suspension ───────────────────────────────────────────────────────────
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -184,14 +193,26 @@ fn generate_world(
         commands.entity(e).insert(Elite).insert(MeleeAttackShape::Broad).insert(LevelEntity);
     }
 
-    // Spawn boss (pre-placed in the world).
-    if let Some((bx, by)) = info.boss_position {
+    // Spawn faction bosses with their specific markers.
+    for &(bx, by, fid) in &info.faction_bosses {
         if let Some((wx, wy)) = find_walkable_near(&map, bx, by) {
+            spawn_faction_boss(&mut commands, &mut meshes, &mut materials, wx, wy, fid);
+        }
+    }
+    // Spawn General Marak.
+    if let Some((gx, gy)) = info.general_position {
+        if let Some((wx, wy)) = find_walkable_near(&map, gx, gy) {
+            spawn_general_boss(&mut commands, &mut meshes, &mut materials, wx, wy);
+        }
+    }
+    // Spawn job targets (FactionJobTarget component on a jab-melee enemy).
+    for &(jx, jy, fid) in &info.job_targets {
+        if let Some((wx, wy)) = find_walkable_near(&map, jx, jy) {
             let e = spawn_enemy(
                 &mut commands, &mut meshes, &mut materials,
-                GridPos { x: wx, y: wy }, 300.0, 20.0, Color::srgb(0.6, 0.0, 0.8),
+                GridPos { x: wx, y: wy }, 60.0, 12.0, Color::srgb(0.9, 0.6, 0.1),
             );
-            commands.entity(e).insert(MobBoss).insert(BossAI::default()).insert(LevelEntity);
+            commands.entity(e).insert(Elite).insert(FactionJobTarget(fid)).insert(LevelEntity);
         }
     }
 
@@ -304,9 +325,12 @@ fn handle_new_game(
     *state.quest = QuestState::default();
     state.boss_defeated.0 = false;
     state.escape_fired.0 = false;
+    state.fortress_fired.0 = false;
     state.player_died.0 = false;
     *state.ending_phase = EndingPhase::default();
     state.fade_timer.0 = 0.0;
+    *state.faction = FactionProgress::default();
+    state.sw_unlocks.unlocked.clear();
 
     // Reset swarm — only the original player body remains.
     state.swarm.members.clear();
@@ -367,11 +391,21 @@ fn handle_new_game(
         commands.entity(e).insert(Elite).insert(LevelEntity);
     }
 
-    if let Some((bx, by)) = info.boss_position {
+    for &(bx, by, fid) in &info.faction_bosses {
         if let Some((wx, wy)) = find_walkable_near(&map, bx, by) {
+            spawn_faction_boss(&mut commands, &mut meshes, &mut materials, wx, wy, fid);
+        }
+    }
+    if let Some((gx, gy)) = info.general_position {
+        if let Some((wx, wy)) = find_walkable_near(&map, gx, gy) {
+            spawn_general_boss(&mut commands, &mut meshes, &mut materials, wx, wy);
+        }
+    }
+    for &(jx, jy, fid) in &info.job_targets {
+        if let Some((wx, wy)) = find_walkable_near(&map, jx, jy) {
             let e = spawn_enemy(&mut commands, &mut meshes, &mut materials,
-                GridPos { x: wx, y: wy }, 300.0, 20.0, Color::srgb(0.6, 0.0, 0.8));
-            commands.entity(e).insert(MobBoss).insert(BossAI::default()).insert(LevelEntity);
+                GridPos { x: wx, y: wy }, 60.0, 12.0, Color::srgb(0.9, 0.6, 0.1));
+            commands.entity(e).insert(Elite).insert(FactionJobTarget(fid)).insert(LevelEntity);
         }
     }
 
@@ -435,6 +469,51 @@ fn handle_new_game(
     commands.insert_resource(CurrentMap(map));
     println!("[LevelSeed] New game started with seed: {}", seed.0);
     dialogue.push("System", "The cell door is open. Escape.");
+}
+
+// ── Boss spawn helpers ────────────────────────────────────────────────────────
+
+fn spawn_faction_boss(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    wx: i32,
+    wy: i32,
+    fid: FactionId,
+) {
+    let (hp, dmg, color) = match fid {
+        FactionId::Syndicate => (300.0, 20.0, Color::srgb(0.6, 0.0, 0.8)),    // purple
+        FactionId::Precinct  => (350.0, 18.0, Color::srgb(0.2, 0.4, 0.9)),    // blue-silver
+        FactionId::Covenant  => (280.0, 22.0, Color::srgb(0.55, 0.05, 0.05)), // dark red
+    };
+    let e = spawn_enemy(commands, meshes, materials, GridPos { x: wx, y: wy }, hp, dmg, color);
+    let mut ec = commands.entity(e);
+    ec.insert(MobBoss).insert(BossAI::default()).insert(BossRelation::Hostile).insert(fid).insert(LevelEntity);
+    match fid {
+        FactionId::Syndicate => { ec.insert(VarroBoss); }
+        FactionId::Precinct  => { ec.insert(HarlanBoss); }
+        FactionId::Covenant  => { ec.insert(ProphetBoss); }
+    }
+}
+
+fn spawn_general_boss(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    wx: i32,
+    wy: i32,
+) {
+    let e = spawn_enemy(
+        commands, meshes, materials,
+        GridPos { x: wx, y: wy },
+        1000.0, 35.0, Color::srgb(0.2, 0.45, 0.2), // military green
+    );
+    commands.entity(e)
+        .insert(MobBoss)
+        .insert(BossAI::default())
+        .insert(BossRelation::Hostile)
+        .insert(GeneralBoss)
+        .insert(LevelEntity);
 }
 
 // ── Zone suspension ───────────────────────────────────────────────────────────

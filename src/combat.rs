@@ -197,8 +197,6 @@ const BROAD_RADIUS: f32 = MELEE_RANGE * 2.0; // 3.0 world units
 
 /// Melee attack range in world units (XZ plane circle distance).
 const MELEE_RANGE: f32 = 1.5;
-/// Boss melee range — slightly larger to match its area-of-effect swipe.
-const BOSS_MELEE_RANGE: f32 = 2.5;
 /// Maximum distance from which a ranged enemy will shoot (world units).
 const RANGED_ATTACK_RANGE: f32 = 7.0;
 /// Ranged enemies stop chasing when they reach this distance (world units).
@@ -289,7 +287,6 @@ impl Plugin for CombatPlugin {
                     enemy_chase_system,
                     enemy_attack_system,
                     projectile_system,
-                    boss_ai_system,
                     player_attack_system,
                     apply_damage,
                     trigger_hitstop.after(apply_damage),
@@ -1064,72 +1061,6 @@ fn dissolve_system(
         if dying.timer <= 0.0 {
             commands.entity(entity).despawn_recursive();
         }
-    }
-}
-
-fn boss_ai_system(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    active_pos: Query<&Transform, Without<MobBoss>>,
-    mut bosses: Query<(&Transform, &GridPos, &mut BossAI, &mut Attack, &Health), (With<MobBoss>, Without<Suspended>)>,
-    active: Res<ActiveEntity>,
-    mut damage_events: EventWriter<DamageEvent>,
-    time: Res<Time>,
-) {
-    let Ok(target_tf) = active_pos.get(active.0) else { return };
-    for (boss_tf, boss_grid, mut ai, mut atk, hp) in &mut bosses {
-        ai.phase_timer -= time.delta_secs();
-        if ai.phase_timer > 0.0 {
-            continue;
-        }
-
-        match ai.phase % 3 {
-            0 => {
-                // Melee swipe — high damage to player if within range
-                if dist_xz(boss_tf.translation, target_tf.translation) <= BOSS_MELEE_RANGE {
-                    damage_events.send(DamageEvent {
-                        target: active.0,
-                        amount: atk.damage * 1.5,
-                        attacker_pos: Some(*boss_grid),
-                    });
-                }
-                ai.phase_timer = 3.0;
-            }
-            1 => {
-                // Ranged throw — always hits
-                damage_events.send(DamageEvent {
-                    target: active.0,
-                    amount: atk.damage * 0.8,
-                    attacker_pos: Some(*boss_grid),
-                });
-                ai.phase_timer = 2.5;
-            }
-            2 => {
-                // Summon 2 adds (small, weak) — phase 2 enrage at 50% HP
-                if hp.current < hp.max * 0.5 {
-                    atk.cooldown = 0.6; // enrage: faster attack cycle
-                }
-                for offset in [(1i32, 0i32), (-1, 0)] {
-                    let ax = (boss_grid.x + offset.0).clamp(0, 119);
-                    let ay = (boss_grid.y + offset.1).clamp(0, 79);
-                    let e = spawn_enemy(
-                        &mut commands,
-                        &mut meshes,
-                        &mut materials,
-                        GridPos { x: ax, y: ay },
-                        15.0,
-                        5.0,
-                        Color::srgb(0.5, 0.0, 0.6),
-                    );
-                    commands.entity(e).insert(LevelEntity);
-                }
-                ai.phase_timer = 5.0;
-            }
-            _ => unreachable!(),
-        }
-
-        ai.phase += 1;
     }
 }
 
