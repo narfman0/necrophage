@@ -16,6 +16,24 @@ use crate::world::{map::TileMap, tile::TileType, CurrentMap, Friendly, GameRng, 
 #[derive(Resource, Default)]
 pub struct HitstopTimer(pub f32);
 
+/// Throttles enemy_sight_system to ~10 Hz to reduce LOS ray-cast CPU load.
+#[derive(Resource, Default)]
+struct SightTimer(f32);
+
+/// Pre-built shared mesh and material handles for projectiles.
+/// Created once at startup; all projectile spawns clone these handles instead of
+/// allocating new GPU assets per shot.
+#[derive(Resource)]
+pub struct ProjectileAssets {
+    pub mesh: Handle<Mesh>,
+    /// Orange — enemy ranged attacks.
+    pub mat_enemy: Handle<StandardMaterial>,
+    /// Green — player and swarm-member ranged attacks.
+    pub mat_player: Handle<StandardMaterial>,
+    /// Cyan — swarm active-entity strong attack.
+    pub mat_swarm: Handle<StandardMaterial>,
+}
+
 // ── Components ───────────────────────────────────────────────────────────────
 
 #[derive(Component, Clone, Reflect)]
@@ -300,6 +318,7 @@ impl Plugin for CombatPlugin {
             .add_event::<EntityDied>()
             .add_event::<AlertEvent>()
             .init_resource::<HitstopTimer>()
+            .init_resource::<SightTimer>()
             .register_type::<Health>()
             .register_type::<Attack>()
             .register_type::<EnemyAI>()
@@ -320,7 +339,8 @@ impl Plugin for CombatPlugin {
                     apply_damage,
                     trigger_hitstop.after(apply_damage),
                     death_system.after(apply_damage),
-                    dissolve_system.after(death_system),
+                    init_dissolve_blend.after(death_system),
+                    dissolve_system.after(init_dissolve_blend),
                     civilian_flee_system,
                     update_hp_bars,
                     player_death_system,
@@ -361,11 +381,37 @@ impl Plugin for CombatPlugin {
             )
             // hitstop must run unconditionally so it can restore virtual time
             // even after a state transition (e.g. GameOver).
-            .add_systems(Update, hitstop_system);
+            .add_systems(Update, hitstop_system)
+            .add_systems(Startup, setup_projectile_assets);
     }
 }
 
 // ── Systems ──────────────────────────────────────────────────────────────────
+
+fn setup_projectile_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    commands.insert_resource(ProjectileAssets {
+        mesh: meshes.add(Sphere::new(0.1)),
+        mat_enemy: materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.6, 0.0),
+            emissive: LinearRgba::new(2.0, 1.0, 0.0, 1.0),
+            ..default()
+        }),
+        mat_player: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.2, 1.0, 0.4),
+            emissive: LinearRgba::new(0.0, 3.0, 0.5, 1.0),
+            ..default()
+        }),
+        mat_swarm: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.1, 0.9, 1.0),
+            emissive: LinearRgba::new(0.0, 2.0, 4.0, 1.0),
+            ..default()
+        }),
+    });
+}
 
 fn tick_attack_cooldowns(mut query: Query<&mut Attack>, time: Res<Time>) {
     for mut atk in &mut query {
@@ -376,12 +422,19 @@ fn tick_attack_cooldowns(mut query: Query<&mut Attack>, time: Res<Time>) {
 }
 
 fn enemy_sight_system(
+    mut sight_timer: ResMut<SightTimer>,
+    time: Res<Time>,
     mut commands: Commands,
     mut enemies: Query<(Entity, &GridPos, &mut EnemyAI, &SightRange, &mut LostTimer), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
     friendlies: Query<(Entity, &GridPos), (With<Friendly>, Without<Dying>)>,
     map: Res<CurrentMap>,
     mut alert_events: EventWriter<AlertEvent>,
 ) {
+    sight_timer.0 -= time.delta_secs();
+    if sight_timer.0 > 0.0 {
+        return;
+    }
+    sight_timer.0 = 0.1; // Run at most 10 times per second.
     for (enemy_entity, pos, mut ai, sight, mut lost) in &mut enemies {
         // Find the closest visible friendly entity within sight range.
         let mut best: Option<(Entity, i32)> = None;
@@ -562,6 +615,7 @@ fn enemy_attack_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    proj_assets: Res<ProjectileAssets>,
     mut enemies: Query<(Entity, &Transform, &GridPos, &Health, &mut Attack, &EnemyAI, Option<&AttackMode>, Option<&MeleeAttackShape>, Option<&ChaseTarget>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>, Without<MeleeWindup>)>,
     active: Res<ActiveEntity>,
     target_query: Query<(&Transform, &GridPos), (With<Friendly>, Without<Enemy>)>,
@@ -605,9 +659,9 @@ fn enemy_attack_system(
             AttackMode::Ranged => {
                 if dist <= RANGED_ATTACK_RANGE && has_line_of_sight(&map.0, *grid, *target_grid) {
                     spawn_projectile(
-                        &mut commands, &mut meshes, &mut materials,
+                        &mut commands,
+                        proj_assets.mesh.clone(), proj_assets.mat_enemy.clone(),
                         enemy_tf.translation, target_entity, target_tf.translation, atk.damage,
-                        Color::srgb(1.0, 0.6, 0.0), LinearRgba::new(2.0, 1.0, 0.0, 1.0),
                     );
                     atk.timer = atk.cooldown;
                     commands.entity(entity).insert(AttackRecovery(0.2));
@@ -758,28 +812,23 @@ fn melee_windup_cleanup_system(
 /// Spawn a projectile from `from_pos` toward `target_pos`.
 /// The projectile travels in a fixed straight line and never homes in.
 /// Used by enemies, the active player, and swarm members.
+/// Callers pass pre-built handles from [`ProjectileAssets`] to avoid per-shot GPU allocations.
 pub fn spawn_projectile(
     commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    mesh: Handle<Mesh>,
+    mat: Handle<StandardMaterial>,
     from_pos: Vec3,
     target: Entity,
     target_pos: Vec3,
     damage: f32,
-    color: Color,
-    emissive: LinearRgba,
 ) {
     let origin = from_pos + Vec3::new(0.0, 0.5, 0.0);
     let aim = target_pos + Vec3::new(0.0, 0.5, 0.0);
     let direction = (aim - origin).normalize_or_zero();
     commands.spawn((
         Projectile { target, damage, lifetime: 3.0, direction },
-        Mesh3d(meshes.add(Sphere::new(0.1))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: color,
-            emissive,
-            ..default()
-        })),
+        Mesh3d(mesh),
+        MeshMaterial3d(mat),
         Transform::from_translation(origin),
         LevelEntity,
     ));
@@ -820,8 +869,7 @@ fn projectile_system(
 
 fn player_attack_system(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    proj_assets: Res<ProjectileAssets>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     active: Res<ActiveEntity>,
@@ -850,9 +898,9 @@ fn player_attack_system(
             .min_by_key(|(_, tf)| (dist_xz(player_tf.translation, tf.translation) * 1000.0) as i32);
         if let Some((target_entity, target_tf)) = nearest {
             spawn_projectile(
-                &mut commands, &mut meshes, &mut materials,
+                &mut commands,
+                proj_assets.mesh.clone(), proj_assets.mat_player.clone(),
                 player_tf.translation, target_entity, target_tf.translation, base_damage,
-                Color::srgb(0.2, 1.0, 0.4), LinearRgba::new(0.0, 3.0, 0.5, 1.0),
             );
             atk.timer = atk.cooldown;
             commands.entity(active.0).insert(AttackRecovery(0.15));
@@ -1027,6 +1075,19 @@ fn consume_corpse_system(
     }
 }
 
+/// Set AlphaMode::Blend exactly once when an entity first gains the Dying component.
+/// Keeps dissolve_system from marking the material dirty every frame just for alpha_mode.
+fn init_dissolve_blend(
+    query: Query<&MeshMaterial3d<StandardMaterial>, Added<Dying>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for mat_handle in &query {
+        if let Some(mat) = materials.get_mut(mat_handle.id()) {
+            mat.alpha_mode = AlphaMode::Blend;
+        }
+    }
+}
+
 fn dissolve_system(
     mut commands: Commands,
     mut query: Query<(Entity, &mut Dying, Option<&MeshMaterial3d<StandardMaterial>>)>,
@@ -1044,7 +1105,6 @@ fn dissolve_system(
         let alpha = (dying.timer / DISSOLVE_DURATION).clamp(0.0, 1.0);
         if let Some(mat_handle) = mat_opt {
             if let Some(mat) = materials.get_mut(mat_handle.id()) {
-                mat.alpha_mode = AlphaMode::Blend;
                 let c = mat.base_color.to_srgba();
                 mat.base_color = Color::srgba(c.red, c.green, c.blue, alpha);
             }

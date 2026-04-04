@@ -5,7 +5,7 @@ use crate::biomass::{Biomass, PsychicPower};
 use crate::camera::CameraTarget;
 use crate::combat::{
     Attack, AttackMode, Civilian, Corpse, DamageEvent, Dying, Enemy, EntityDied, EntityPath, Health,
-    HpBar, HpBarRoot, has_line_of_sight, spawn_projectile,
+    HpBar, HpBarRoot, ProjectileAssets, has_line_of_sight, spawn_projectile,
 };
 use crate::dialogue::DialogueQueue;
 use crate::movement::{AttackRecovery, Body, GridPos, MoveDir};
@@ -297,8 +297,7 @@ fn tick_strong_attack(mut query: Query<&mut StrongAttack>, time: Res<Time>) {
 
 fn strong_attack_system(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    proj_assets: Res<ProjectileAssets>,
     keys: Res<ButtonInput<KeyCode>>,
     active: Res<ActiveEntity>,
     active_query: Query<(&Transform, &GridPos)>,
@@ -325,9 +324,9 @@ fn strong_attack_system(
             .min_by_key(|(_, tf)| (dist_xz(active_tf.translation, tf.translation) * 1000.0) as i32);
         if let Some((target_entity, target_tf)) = nearest {
             spawn_projectile(
-                &mut commands, &mut meshes, &mut materials,
+                &mut commands,
+                proj_assets.mesh.clone(), proj_assets.mat_swarm.clone(),
                 active_tf.translation, target_entity, target_tf.translation, base_damage,
-                Color::srgb(0.1, 0.9, 1.0), LinearRgba::new(0.0, 2.0, 4.0, 1.0),
             );
             sa.timer = sa.cooldown;
             commands.entity(active.0).insert(AttackRecovery(0.4));
@@ -527,8 +526,7 @@ fn swarm_ai_system(
 /// Controlled members (Prophet's PsychicControl) attack Friendly entities instead.
 fn swarm_auto_attack_system(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    proj_assets: Res<ProjectileAssets>,
     swarm: Res<Swarm>,
     active: Res<ActiveEntity>,
     member_transforms: Query<&Transform, With<SwarmMember>>,
@@ -591,9 +589,9 @@ fn swarm_auto_attack_system(
         if mode == Some(&AttackMode::Ranged) {
             if dist <= RANGED_ATTACK_RANGE {
                 spawn_projectile(
-                    &mut commands, &mut meshes, &mut materials,
+                    &mut commands,
+                    proj_assets.mesh.clone(), proj_assets.mat_player.clone(),
                     member_pos, target_entity, target_pos, base_damage,
-                    Color::srgb(0.2, 1.0, 0.4), LinearRgba::new(0.0, 3.0, 0.5, 1.0),
                 );
                 atk.timer = atk.cooldown;
                 commands.entity(entity).insert(AttackRecovery(0.2));

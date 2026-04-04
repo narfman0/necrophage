@@ -32,6 +32,11 @@ pub struct MinimapPanel;
 #[derive(Resource, Default)]
 pub struct MinimapVisible(pub bool);
 
+/// Set to true whenever a GridPos that affects the minimap changes.
+/// Prevents the minimap from rebuilding its texture every frame.
+#[derive(Resource, Default)]
+struct MinimapDirty(bool);
+
 /// Handle to the live minimap image asset.
 #[derive(Resource)]
 struct MinimapHandle(Handle<Image>);
@@ -41,10 +46,11 @@ pub struct MinimapPlugin;
 impl Plugin for MinimapPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MinimapVisible>()
+            .init_resource::<MinimapDirty>()
             .add_systems(Startup, setup_minimap)
             .add_systems(
                 Update,
-                (toggle_minimap, refresh_minimap)
+                (toggle_minimap, mark_minimap_dirty, refresh_minimap.after(mark_minimap_dirty))
                     .run_if(in_state(GameState::Playing)),
             );
     }
@@ -85,8 +91,20 @@ fn toggle_minimap(
     }
 }
 
+fn mark_minimap_dirty(
+    mut dirty: ResMut<MinimapDirty>,
+    player_moved: Query<(), (With<Player>, Changed<GridPos>)>,
+    enemies_moved: Query<(), (With<Enemy>, Changed<GridPos>)>,
+    toggled: Res<MinimapVisible>,
+) {
+    if toggled.is_changed() || !player_moved.is_empty() || !enemies_moved.is_empty() {
+        dirty.0 = true;
+    }
+}
+
 fn refresh_minimap(
     visible: Res<MinimapVisible>,
+    mut dirty: ResMut<MinimapDirty>,
     map: Res<CurrentMap>,
     active: Res<ActiveEntity>,
     player_pos: Query<&GridPos, With<Player>>,
@@ -97,9 +115,10 @@ fn refresh_minimap(
     faction: Res<FactionProgress>,
 ) {
     let _ = &active; // used only to access player entity
-    if !visible.0 {
+    if !visible.0 || !dirty.0 {
         return;
     }
+    dirty.0 = false;
     let player_gp = player_pos.get(active.0).ok().copied();
     let enemies: Vec<GridPos> = enemy_positions.iter().copied().collect();
     let quest_target = player_gp.and_then(|p| quest_target_pos(&quest_state, &faction, p));
