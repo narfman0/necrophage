@@ -123,18 +123,6 @@ pub struct LostTimer(pub f32);
 #[derive(Component)]
 pub struct Invincible;
 
-/// Velocity-based knockback push. Applied by `apply_damage`, animated by `knockback_system`.
-/// GridPos is snapped to the destination tile on the first tick; Transform is animated.
-#[derive(Component)]
-pub struct Knockback {
-    /// World-space XZ impulse velocity (decays with exponential drag).
-    pub vel: Vec2,
-    /// Remaining seconds; remove component when this reaches zero.
-    pub timer: f32,
-    /// Whether the GridPos has already been snapped to the destination tile.
-    pub pos_updated: bool,
-}
-
 /// Brief emissive flash applied to an entity when it takes damage.
 /// White for the player, orange for enemies. Removed after `timer` expires.
 #[derive(Component)]
@@ -325,7 +313,6 @@ impl Plugin for CombatPlugin {
                     trigger_hitstop.after(apply_damage),
                     death_system.after(apply_damage),
                     dissolve_system.after(death_system),
-                    knockback_system.after(death_system),
                     civilian_flee_system,
                     update_hp_bars,
                     player_death_system,
@@ -483,14 +470,17 @@ fn enemy_patrol_system(
 
 fn enemy_chase_system(
     mut commands: Commands,
-    mut enemies: Query<(Entity, &mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, Option<&AttackRecovery>, Option<&MeleeWindup>, Option<&AttackMode>, Option<&mut EntityPath>, Option<&ChaseTarget>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
+    mut enemies: Query<(Entity, &mut GridPos, &mut PatrolTimer, &EnemyAI, &Transform, &Health, Option<&AttackRecovery>, Option<&MeleeWindup>, Option<&AttackMode>, Option<&mut EntityPath>, Option<&ChaseTarget>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>)>,
     active: Res<ActiveEntity>,
     target_query: Query<(&GridPos, &Transform), (With<Friendly>, Without<Enemy>)>,
     map: Res<CurrentMap>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut pos, _timer, ai, transform, atk_recovery, windup, mode, mut path_opt, chase_opt) in &mut enemies {
+    for (entity, mut pos, _timer, ai, transform, hp, atk_recovery, windup, mode, mut path_opt, chase_opt) in &mut enemies {
+        if hp.current <= 0.0 {
+            continue;
+        }
         if *ai != EnemyAI::Chase {
             continue;
         }
@@ -563,11 +553,15 @@ fn enemy_attack_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut enemies: Query<(Entity, &Transform, &GridPos, &mut Attack, &EnemyAI, Option<&AttackMode>, Option<&MeleeAttackShape>, Option<&ChaseTarget>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>, Without<MeleeWindup>)>,
+    mut enemies: Query<(Entity, &Transform, &GridPos, &Health, &mut Attack, &EnemyAI, Option<&AttackMode>, Option<&MeleeAttackShape>, Option<&ChaseTarget>), (With<Enemy>, Without<Dying>, Without<Corpse>, Without<Suspended>, Without<MeleeWindup>)>,
     active: Res<ActiveEntity>,
-    target_query: Query<&Transform, (With<Friendly>, Without<Enemy>)>,
+    target_query: Query<(&Transform, &GridPos), (With<Friendly>, Without<Enemy>)>,
+    map: Res<CurrentMap>,
 ) {
-    for (entity, enemy_tf, _grid, mut atk, ai, mode, shape_opt, chase_opt) in &mut enemies {
+    for (entity, enemy_tf, grid, hp, mut atk, ai, mode, shape_opt, chase_opt) in &mut enemies {
+        if hp.current <= 0.0 {
+            continue;
+        }
         if *ai != EnemyAI::Chase && *ai != EnemyAI::AttackTarget {
             continue;
         }
@@ -575,7 +569,7 @@ fn enemy_attack_system(
             continue;
         }
         let target_entity = chase_opt.map(|ct| ct.0).unwrap_or(active.0);
-        let Ok(target_tf) = target_query.get(target_entity) else { continue };
+        let Ok((target_tf, target_grid)) = target_query.get(target_entity) else { continue };
         let dist = dist_xz(enemy_tf.translation, target_tf.translation);
         match mode.copied().unwrap_or_default() {
             AttackMode::Melee => {
@@ -600,7 +594,7 @@ fn enemy_attack_system(
                 }
             }
             AttackMode::Ranged => {
-                if dist <= RANGED_ATTACK_RANGE {
+                if dist <= RANGED_ATTACK_RANGE && has_line_of_sight(&map.0, *grid, *target_grid) {
                     spawn_projectile(
                         &mut commands, &mut meshes, &mut materials,
                         enemy_tf.translation, target_entity, target_tf.translation, atk.damage,
@@ -871,11 +865,9 @@ fn player_attack_system(
 }
 
 pub fn apply_damage(
-    mut commands: Commands,
     mut events: EventReader<DamageEvent>,
     mut health_query: Query<&mut Health>,
     invincible: Query<(), With<Invincible>>,
-    positions: Query<&GridPos>,
     mut alert_events: EventWriter<AlertEvent>,
     harvestable: Query<(), (With<Enemy>, Without<MobBoss>, Without<HarvestExhausted>)>,
 ) {
@@ -897,19 +889,7 @@ pub fn apply_damage(
                 hp.current = new_hp;
             }
         }
-        // Insert knockback component (GridPos + visual animation handled by knockback_system).
         if let Some(src) = ev.attacker_pos {
-            if let Ok(target_pos) = positions.get(ev.target) {
-                let dx = (target_pos.x - src.x).signum();
-                let dy = (target_pos.y - src.y).signum();
-                if dx != 0 || dy != 0 {
-                    commands.entity(ev.target).insert(Knockback {
-                        vel: Vec2::new(dx as f32, dy as f32) * 6.0,
-                        timer: 0.18,
-                        pos_updated: false,
-                    });
-                }
-            }
             // Emit alert at the combat location so nearby enemies react.
             alert_events.send(AlertEvent { origin: src });
         }
@@ -988,42 +968,6 @@ fn hit_flash_system(
     }
 }
 
-/// Pushes the entity in the knockback direction (GridPos + animated Transform).
-/// Runs after death_system so dead entities are skipped.
-fn knockback_system(
-    mut commands: Commands,
-    mut query: Query<(Entity, &mut GridPos, &mut Transform, &mut Knockback)>,
-    map: Res<CurrentMap>,
-    time: Res<Time>,
-) {
-    let dt = time.delta_secs();
-    for (entity, mut pos, mut transform, mut kb) in &mut query {
-        // Snap GridPos to the destination tile exactly once.
-        if !kb.pos_updated {
-            kb.pos_updated = true;
-            let dx = kb.vel.x.signum() as i32;
-            let dy = kb.vel.y.signum() as i32;
-            let nx = pos.x + dx;
-            let ny = pos.y + dy;
-            if map.0.is_walkable(nx, ny) {
-                pos.x = nx;
-                pos.y = ny;
-            }
-        }
-
-        kb.timer -= dt;
-        if kb.timer <= 0.0 {
-            commands.entity(entity).remove::<Knockback>();
-            continue;
-        }
-        // Apply velocity and exponentially decay it (drag).
-        transform.translation.x += kb.vel.x * dt;
-        transform.translation.z += kb.vel.y * dt;
-        let drag = (-10.0_f32 * dt).exp();
-        kb.vel *= drag;
-    }
-}
-
 pub fn death_system(
     mut commands: Commands,
     mut query: Query<(Entity, &Health, &GridPos, Option<&Civilian>, Option<&HpBar>, &mut Transform, Option<&mut MoveDir>), (Without<Player>, Without<Dying>, Without<Corpse>)>,
@@ -1060,32 +1004,14 @@ fn consume_corpse_system(
     mut commands: Commands,
     active: Res<ActiveEntity>,
     active_pos: Query<&GridPos>,
-    corpses: Query<(Entity, &GridPos, &Corpse, &Transform)>,
-    mut biomass: ResMut<crate::biomass::Biomass>,
-    mut psychic_power: ResMut<PsychicPower>,
+    corpses: Query<(Entity, &GridPos), With<Corpse>>,
 ) {
     let Ok(player_gp) = active_pos.get(active.0) else { return };
 
-    // Consume every corpse the player is standing on or adjacent to.
-    for (entity, gp, corpse, transform) in &corpses {
+    // Dissolve every corpse the player is standing on or adjacent to.
+    for (entity, gp) in &corpses {
         let dist = (gp.x - player_gp.x).abs().max((gp.y - player_gp.y).abs());
         if dist <= CONSUME_RANGE {
-            biomass.0 += corpse.biomass_value;
-            psychic_power.0 += corpse.biomass_value;
-            // Floating "+Xbm" text above the corpse.
-            let world_pos = transform.translation + Vec3::new(0.0, 1.2, 0.0);
-            commands.spawn((
-                Text(format!("+{:.0}bm", corpse.biomass_value)),
-                TextFont { font_size: 14.0, ..default() },
-                TextColor(Color::srgba(0.3, 1.0, 0.3, 1.0)),
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(0.0),
-                    top: Val::Px(0.0),
-                    ..default()
-                },
-                FloatingNumber { world_pos, timer: 1.0, max_timer: 1.0 },
-            ));
             commands.entity(entity)
                 .remove::<Corpse>()
                 .insert(Dying { delay: DISSOLVE_DELAY, timer: DISSOLVE_DURATION });
@@ -1499,17 +1425,6 @@ mod tests {
         // Values match the constants used in death_system.
         assert_eq!(civilian_orb, 2.0);
         assert_eq!(enemy_orb, 5.0);
-    }
-
-    #[test]
-    fn knockback_direction_away_from_source() {
-        // Attacker at (3,3), target at (5,3) → knockback dx=+1, dy=0
-        let src = GridPos { x: 3, y: 3 };
-        let target = GridPos { x: 5, y: 3 };
-        let dx = (target.x - src.x).signum();
-        let dy = (target.y - src.y).signum();
-        assert_eq!(dx, 1);
-        assert_eq!(dy, 0);
     }
 
     #[test]
