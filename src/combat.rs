@@ -168,6 +168,14 @@ pub struct HarvestWindow {
 #[derive(Component)]
 pub struct HarvestExhausted;
 
+/// Entity ID of the floating "F" indicator above a harvestable enemy.
+#[derive(Component)]
+struct HarvestIndicatorEntity(Entity);
+
+/// Marker component on the floating harvest indicator mesh itself.
+#[derive(Component)]
+struct HarvestIndicatorMesh;
+
 /// Marks an entity that an enemy is actively targeting.
 #[derive(Component, Reflect)]
 pub struct ChaseTarget(pub Entity);
@@ -347,6 +355,7 @@ impl Plugin for CombatPlugin {
                     tick_harvest_window_system,
                     harvest_action_system.after(open_harvest_window_system),
                     harvest_pulse_system,
+                    update_harvest_indicators,
                 )
                 .run_if(in_state(GameState::Playing)),
             )
@@ -877,11 +886,10 @@ pub fn apply_damage(
         }
         if let Ok(mut hp) = health_query.get_mut(ev.target) {
             let new_hp = hp.current - ev.amount;
-            // Once below the harvest threshold, cap fatal damage so the harvest
-            // window has a chance to open before the enemy dies.
+            // Cap any fatal hit on a harvestable enemy so the harvest window
+            // can open regardless of how much HP they started with.
             if new_hp <= 0.0
                 && hp.max > 0.0
-                && hp.current / hp.max <= HARVEST_THRESHOLD
                 && harvestable.get(ev.target).is_ok()
             {
                 hp.current = (hp.max * HARVEST_FLOOR).max(0.01);
@@ -1261,11 +1269,13 @@ fn update_floating_numbers(
 // ── Harvest window ────────────────────────────────────────────────────────────
 
 /// When a non-boss enemy's HP drops to HARVEST_THRESHOLD, open the harvest window:
-/// stun them (Invincible) and show a pulsing colour cue.
+/// stun them (Invincible), show a pulsing colour cue, and spawn a floating indicator.
 fn open_harvest_window_system(
     mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     enemies: Query<
-        (Entity, &Health),
+        (Entity, &Health, &Transform),
         (
             With<Enemy>,
             Without<MobBoss>,
@@ -1278,7 +1288,7 @@ fn open_harvest_window_system(
     >,
     mut rng: ResMut<GameRng>,
 ) {
-    for (entity, hp) in &enemies {
+    for (entity, hp, tf) in &enemies {
         if hp.max <= 0.0 || hp.current / hp.max > HARVEST_THRESHOLD {
             continue;
         }
@@ -1288,9 +1298,31 @@ fn open_harvest_window_system(
             1 => HarvestReward::Biomass(HARVEST_BIOMASS),
             _ => HarvestReward::Nothing,
         };
+
+        // Floating indicator: small sphere above the enemy, colour-coded by reward.
+        let indicator_color = match &reward {
+            HarvestReward::Health(_)  => LinearRgba::new(0.0, 4.0, 0.0, 1.0),
+            HarvestReward::Biomass(_) => LinearRgba::new(4.0, 0.0, 0.0, 1.0),
+            HarvestReward::Nothing    => LinearRgba::new(2.0, 2.0, 2.0, 1.0),
+        };
+        let indicator = commands.spawn((
+            HarvestIndicatorMesh,
+            LevelEntity,
+            Mesh3d(meshes.add(Sphere::new(0.18))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                emissive: indicator_color,
+                unlit: true,
+                ..default()
+            })),
+            Transform::from_translation(tf.translation + Vec3::new(0.0, 1.8, 0.0))
+                .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_4)),
+        )).id();
+
         commands.entity(entity).insert((
             HarvestWindow { timer: HARVEST_WINDOW_DURATION, reward },
             Invincible,
+            HarvestIndicatorEntity(indicator),
         ));
     }
 }
@@ -1299,20 +1331,24 @@ fn open_harvest_window_system(
 /// enemy resumes fighting; add HarvestExhausted to prevent a second window.
 fn tick_harvest_window_system(
     mut commands: Commands,
-    mut enemies: Query<(Entity, &mut HarvestWindow, &MeshMaterial3d<StandardMaterial>)>,
+    mut enemies: Query<(Entity, &mut HarvestWindow, &MeshMaterial3d<StandardMaterial>, Option<&HarvestIndicatorEntity>)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     time: Res<Time>,
 ) {
-    for (entity, mut hw, mat_handle) in &mut enemies {
+    for (entity, mut hw, mat_handle, indicator) in &mut enemies {
         hw.timer -= time.delta_secs();
         if hw.timer <= 0.0 {
             // Restore neutral emissive.
             if let Some(mat) = materials.get_mut(mat_handle.id()) {
                 mat.emissive = LinearRgba::BLACK;
             }
+            if let Some(HarvestIndicatorEntity(ind)) = indicator {
+                commands.entity(*ind).despawn_recursive();
+            }
             commands.entity(entity)
                 .remove::<HarvestWindow>()
                 .remove::<Invincible>()
+                .remove::<HarvestIndicatorEntity>()
                 .insert(HarvestExhausted);
         }
     }
@@ -1330,6 +1366,7 @@ fn harvest_action_system(
     mut health_query: Query<&mut Health>,
     mut biomass: ResMut<crate::biomass::Biomass>,
     mut psychic_power: ResMut<PsychicPower>,
+    indicators: Query<&HarvestIndicatorEntity>,
     mut commands: Commands,
 ) {
     if !keys.just_pressed(KeyCode::KeyF) {
@@ -1392,7 +1429,10 @@ fn harvest_action_system(
     if let Ok(mut hp) = health_query.get_mut(entity) {
         hp.current = -999.0;
     }
-    commands.entity(entity).remove::<HarvestWindow>().remove::<Invincible>();
+    if let Ok(HarvestIndicatorEntity(ind)) = indicators.get(entity) {
+        commands.entity(*ind).despawn_recursive();
+    }
+    commands.entity(entity).remove::<HarvestWindow>().remove::<Invincible>().remove::<HarvestIndicatorEntity>();
 }
 
 /// Pulse the emissive colour of harvestable enemies to signal their reward type.
@@ -1409,6 +1449,39 @@ fn harvest_pulse_system(
                 HarvestReward::Biomass(_) => LinearRgba::new(pulse * 5.0, 0.0, 0.0, 1.0),
                 HarvestReward::Nothing    => LinearRgba::new(pulse, pulse, pulse, 1.0),
             };
+        }
+    }
+}
+
+/// Track harvestable enemy positions and pulse the floating indicator above them.
+fn update_harvest_indicators(
+    time: Res<Time>,
+    mut params: ParamSet<(
+        Query<(&Transform, &HarvestWindow, &HarvestIndicatorEntity)>,
+        Query<(&mut Transform, &MeshMaterial3d<StandardMaterial>), With<HarvestIndicatorMesh>>,
+    )>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let pulse = ((time.elapsed_secs() * 4.0).sin() * 0.5 + 0.5).powi(2);
+    let bob = (time.elapsed_secs() * 3.0).sin() * 0.12;
+
+    // Collect enemy data first, then update indicators.
+    let enemy_data: Vec<(Entity, Vec3, HarvestReward)> = params.p0()
+        .iter()
+        .map(|(tf, hw, HarvestIndicatorEntity(ind))| (*ind, tf.translation, hw.reward.clone()))
+        .collect();
+
+    let mut ind_query = params.p1();
+    for (ind_entity, enemy_pos, reward) in enemy_data {
+        let Ok((mut ind_tf, mat_handle)) = ind_query.get_mut(ind_entity) else { continue };
+        ind_tf.translation = enemy_pos + Vec3::new(0.0, 1.9 + bob, 0.0);
+        let emissive = match reward {
+            HarvestReward::Health(_)  => LinearRgba::new(0.0, 3.0 + pulse * 4.0, 0.0, 1.0),
+            HarvestReward::Biomass(_) => LinearRgba::new(3.0 + pulse * 4.0, 0.0, 0.0, 1.0),
+            HarvestReward::Nothing    => LinearRgba::new(1.0 + pulse * 2.0, 1.0 + pulse * 2.0, 1.0 + pulse * 2.0, 1.0),
+        };
+        if let Some(mat) = materials.get_mut(mat_handle.id()) {
+            mat.emissive = emissive;
         }
     }
 }

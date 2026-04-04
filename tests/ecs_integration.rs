@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use necrophage::combat::{
     apply_damage, death_system, AlertEvent, Corpse, DamageEvent, Enemy, EntityDied, Health,
+    HarvestExhausted,
 };
 use necrophage::levels::generator::LevelGenerator;
 use necrophage::levels::jail::JailGenerator;
@@ -49,11 +50,47 @@ fn build_combat_test_app() -> App {
     app
 }
 
+/// A HarvestExhausted enemy (no more harvest window available) should die normally
+/// from lethal damage and receive the Corpse component.
 #[test]
 fn enemy_becomes_corpse_after_lethal_damage() {
     let mut app = build_combat_test_app();
 
-    // Spawn a minimal enemy entity (no mesh/material needed for these systems).
+    // HarvestExhausted means the harvest window has already been used; the enemy
+    // can be killed normally.
+    let enemy = app
+        .world_mut()
+        .spawn((
+            Enemy,
+            HarvestExhausted,
+            Health::new(10.0),
+            GridPos { x: 5, y: 5 },
+            Transform::from_xyz(5.0, 0.5, 5.0),
+        ))
+        .id();
+
+    app.world_mut()
+        .resource_mut::<Events<DamageEvent>>()
+        .send(DamageEvent {
+            target: enemy,
+            amount: 999.0,
+            attacker_pos: None,
+        });
+
+    app.update();
+
+    assert!(
+        app.world().get::<Corpse>(enemy).is_some(),
+        "enemy should have Corpse component after lethal damage"
+    );
+}
+
+/// A fresh (harvestable) enemy should NOT die from lethal damage; instead their
+/// HP should be capped at the harvest floor so the harvest window can open.
+#[test]
+fn harvestable_enemy_survives_lethal_damage() {
+    let mut app = build_combat_test_app();
+
     let enemy = app
         .world_mut()
         .spawn((
@@ -64,7 +101,6 @@ fn enemy_becomes_corpse_after_lethal_damage() {
         ))
         .id();
 
-    // Send a damage event that exceeds the enemy's HP.
     app.world_mut()
         .resource_mut::<Events<DamageEvent>>()
         .send(DamageEvent {
@@ -73,14 +109,15 @@ fn enemy_becomes_corpse_after_lethal_damage() {
             attacker_pos: None,
         });
 
-    // Run one update cycle so apply_damage and death_system execute.
     app.update();
 
-    // The entity should now carry a Corpse component.
+    // Should still be alive (no Corpse), HP capped above zero.
     assert!(
-        app.world().get::<Corpse>(enemy).is_some(),
-        "enemy should have Corpse component after lethal damage"
+        app.world().get::<Corpse>(enemy).is_none(),
+        "harvestable enemy should not become a Corpse from lethal damage"
     );
+    let hp = app.world().get::<Health>(enemy).unwrap();
+    assert!(hp.current > 0.0, "harvestable enemy HP should be capped above zero");
 }
 
 // ── Test 3: Level generator produces a walkable player start ─────────────────
