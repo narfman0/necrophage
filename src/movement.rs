@@ -28,7 +28,7 @@ const DASH_SPEED: f32 = 14.0;
 /// How long a dash lasts in seconds.
 const DASH_DURATION: f32 = 0.09;
 /// Cooldown between dashes in seconds.
-const DASH_COOLDOWN: f32 = 0.8;
+const DASH_COOLDOWN: f32 = 0.5;
 /// How long the post-dash recovery slow lasts in seconds.
 const DASH_RECOVERY_SLOW: f32 = 0.3;
 /// Speed multiplier during post-dash recovery.

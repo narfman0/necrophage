@@ -1418,18 +1418,21 @@ fn tick_harvest_window_system(
 }
 
 /// F key near a harvestable enemy: snap the player onto it, apply the reward,
-/// and set HP to a lethal value so death_system kills it this frame.
+/// and immediately begin dissolving the enemy (bypass the Corpse state so
+/// consume_corpse_system cannot trigger a second consume and the indicator
+/// is gone before the next frame).
 fn harvest_action_system(
     keys: Res<ButtonInput<KeyCode>>,
     active: Res<ActiveEntity>,
     mut params: ParamSet<(
         Query<(&mut GridPos, &mut Transform), With<Player>>,
-        Query<(Entity, &GridPos, &Transform, &HarvestWindow), (With<Enemy>, Without<MobBoss>)>,
+        Query<(Entity, &GridPos, &Transform, &HarvestWindow, Option<&HpBar>), (With<Enemy>, Without<MobBoss>)>,
     )>,
     mut health_query: Query<&mut Health>,
     mut biomass: ResMut<crate::biomass::Biomass>,
     mut psychic_power: ResMut<PsychicPower>,
     indicators: Query<&HarvestIndicatorEntity>,
+    mut death_events: EventWriter<EntityDied>,
     mut commands: Commands,
 ) {
     if !keys.just_pressed(KeyCode::KeyF) {
@@ -1444,24 +1447,24 @@ fn harvest_action_system(
     };
 
     // Find the nearest harvestable enemy within range.
-    let mut best: Option<(Entity, GridPos, Vec3, HarvestReward)> = None;
+    let mut best: Option<(Entity, GridPos, Vec3, HarvestReward, Option<Entity>)> = None;
     {
         let q = params.p1();
-        for (entity, gp, tf, hw) in &q {
+        for (entity, gp, tf, hw, hp_bar) in &q {
             let dist = (gp.x - player_gp.x).abs().max((gp.y - player_gp.y).abs());
             if dist <= HARVEST_RANGE {
-                let closer = best.as_ref().map_or(true, |(_, bgp, _, _)| {
+                let closer = best.as_ref().map_or(true, |(_, bgp, _, _, _)| {
                     let bd = (bgp.x - player_gp.x).abs().max((bgp.y - player_gp.y).abs());
                     dist < bd
                 });
                 if closer {
-                    best = Some((entity, *gp, tf.translation, hw.reward.clone()));
+                    best = Some((entity, *gp, tf.translation, hw.reward.clone(), hp_bar.map(|b| b.0)));
                 }
             }
         }
     }
 
-    let Some((entity, enemy_gp, enemy_world_pos, reward)) = best else { return };
+    let Some((entity, enemy_gp, enemy_world_pos, reward, bar_entity)) = best else { return };
 
     // Snap player onto the enemy.
     {
@@ -1488,14 +1491,26 @@ fn harvest_action_system(
         HarvestReward::Nothing => {}
     }
 
-    // Kill the enemy — set HP lethal so death_system fires this frame.
-    if let Ok(mut hp) = health_query.get_mut(entity) {
-        hp.current = -999.0;
+    // Fire EntityDied so kill-heal, population, and quest systems register the kill.
+    death_events.send(EntityDied { entity, pos: enemy_gp });
+
+    // Remove the HP bar immediately.
+    if let Some(bar) = bar_entity {
+        commands.entity(bar).despawn_recursive();
     }
+    // Despawn the floating indicator.
     if let Ok(HarvestIndicatorEntity(ind)) = indicators.get(entity) {
         commands.entity(*ind).despawn_recursive();
     }
-    commands.entity(entity).remove::<HarvestWindow>().remove::<Invincible>().remove::<HarvestIndicatorEntity>();
+    // Transition directly to Dying (skip Corpse) so consume_corpse_system cannot
+    // auto-consume the corpse and the indicator disappears this frame.
+    commands.entity(entity)
+        .remove::<HarvestWindow>()
+        .remove::<Invincible>()
+        .remove::<HarvestIndicatorEntity>()
+        .remove::<Body>()
+        .insert(Immovable)
+        .insert(Dying { delay: DISSOLVE_DELAY, timer: DISSOLVE_DURATION });
 }
 
 /// Pulse the emissive colour of harvestable enemies to signal their reward type.

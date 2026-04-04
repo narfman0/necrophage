@@ -23,7 +23,8 @@ use crate::combat::{
 use crate::dialogue::DialogueQueue;
 use crate::ending::{EndingPhase, FadeTimer};
 use crate::faction::{BossRelation, FactionId, FactionJobTarget, FactionProgress};
-use crate::movement::{Body, GridPos};
+use crate::camera::CameraTarget;
+use crate::movement::{Body, GridPos, Immovable};
 use crate::npc::{Liberator, LiberatorState, ScriptTimer};
 use crate::player::{ActiveEntity, Player};
 use crate::quest::{BossDefeated, EscapeFired, FortressEntryFired, QuestState};
@@ -301,10 +302,11 @@ fn handle_new_game(
     mut materials: ResMut<Assets<StandardMaterial>>,
     tile_assets: Res<TileAssets>,
     seed: Res<LevelSeed>,
-    active: Res<ActiveEntity>,
+    mut active: ResMut<ActiveEntity>,
+    mut camera_target: ResMut<CameraTarget>,
     level_entities: Query<Entity, With<LevelEntity>>,
     swarm_members: Query<Entity, With<SwarmMember>>,
-    mut player_query: Query<(&mut GridPos, &mut Transform, &mut Health), With<Player>>,
+    mut player_query: Query<(Entity, &mut GridPos, &mut Transform, &mut Health), With<Player>>,
     mut liberator_query: Query<
         (&mut GridPos, &mut Transform, &mut LiberatorState, &mut ScriptTimer),
         (With<Liberator>, Without<Player>),
@@ -340,15 +342,26 @@ fn handle_new_game(
     state.sw_unlocks.unlocked.clear();
     state.army_spawned.0 = false;
 
+    // Always use the actual Player entity (not active.0, which may point to a
+    // now-despawned swarm member if the player died while possessing one).
+    let Ok((player_entity, mut ppos, mut ptf, mut hp)) = player_query.get_single_mut() else {
+        return;
+    };
+
     // Reset swarm — only the original player body remains.
     state.swarm.members.clear();
-    state.swarm.members.push(active.0);
+    state.swarm.members.push(player_entity);
     state.swarm.active_index = 0;
 
+    // Re-point ActiveEntity and camera to the player body.
+    active.0 = player_entity;
+    camera_target.0 = Some(player_entity);
+
+    // Restore player physics state in case Immovable was set or Body was removed.
+    commands.entity(player_entity).remove::<Immovable>().insert(Body);
+
     // Reset player HP.
-    if let Ok((_, _, mut hp)) = player_query.get_mut(active.0) {
-        hp.current = hp.max;
-    }
+    hp.current = hp.max;
 
     // Re-seed RNG and regenerate the world.
     rng.0 = StdRng::seed_from_u64(seed.0);
@@ -361,11 +374,9 @@ fn handle_new_game(
         commands.entity(e).insert(LevelEntity);
     }
 
-    if let Ok((mut ppos, mut ptf, _)) = player_query.get_mut(active.0) {
-        ppos.x = info.player_start.0;
-        ppos.y = info.player_start.1;
-        ptf.translation = tile_to_world(ppos.x, ppos.y) + Vec3::new(0.0, 0.5, 0.0);
-    }
+    ppos.x = info.player_start.0;
+    ppos.y = info.player_start.1;
+    ptf.translation = tile_to_world(ppos.x, ppos.y) + Vec3::new(0.0, 0.5, 0.0);
 
     if let Some((lx, ly)) = info.liberator_start {
         if let Ok((mut lpos, mut ltf, mut lstate, mut ltimer)) = liberator_query.get_single_mut() {
