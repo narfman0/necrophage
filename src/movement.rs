@@ -39,6 +39,11 @@ const DASH_RECOVERY_MULT: f32 = 0.4;
 #[derive(Component, Reflect)]
 pub struct Body;
 
+/// Marker: this entity should not be moved by `lerp_transforms`.
+/// Inserted on death so corpses stay where they fell instead of sliding to their last GridPos target.
+#[derive(Component, Reflect)]
+pub struct Immovable;
+
 /// Dash state. Add to any entity that should be able to dash (Space key).
 #[derive(Component, Default, Reflect)]
 pub struct Dash {
@@ -76,6 +81,7 @@ impl Plugin for MovementPlugin {
         app.register_type::<GridPos>()
             .register_type::<MoveDir>()
             .register_type::<Body>()
+            .register_type::<Immovable>()
             .register_type::<Dash>()
             .register_type::<AttackRecovery>()
             .add_systems(
@@ -236,7 +242,7 @@ fn apply_movement(
 /// Move non-player entities (enemies, NPCs) toward their GridPos target at constant speed.
 pub const WALK_ARRIVAL_DIST: f32 = 0.08;
 fn lerp_transforms(
-    mut query: Query<(&GridPos, &mut Transform), (Without<MoveDir>, Without<crate::world::Suspended>)>,
+    mut query: Query<(&GridPos, &mut Transform), (Without<MoveDir>, Without<crate::world::Suspended>, Without<Immovable>)>,
     time: Res<Time>,
 ) {
     let step = WALK_SPEED * time.delta_secs();

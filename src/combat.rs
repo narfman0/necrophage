@@ -7,7 +7,7 @@ use bevy::render::render_asset::RenderAssetUsages;
 use rand::Rng;
 
 use crate::biomass::PsychicPower;
-use crate::movement::{AttackRecovery, Body, GridPos, MoveDir, WALK_ARRIVAL_DIST};
+use crate::movement::{AttackRecovery, Body, GridPos, Immovable, MoveDir, WALK_ARRIVAL_DIST};
 use crate::player::{ActiveEntity, Player};
 use crate::world::{map::TileMap, tile::TileType, CurrentMap, Friendly, GameRng, GameState, LevelEntity, PlayerDied, Suspended};
 
@@ -1048,7 +1048,10 @@ pub fn death_system(
             transform.translation.y = 0.25;
 
             let biomass_value: f32 = if is_civilian.is_some() { 2.0 } else { 5.0 };
-            commands.entity(entity).insert(Corpse { biomass_value });
+            commands.entity(entity)
+                .insert(Corpse { biomass_value })
+                .insert(Immovable)
+                .remove::<Body>();
         }
     }
 }
